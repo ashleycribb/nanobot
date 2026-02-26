@@ -432,10 +432,10 @@ Respond with ONLY valid JSON, no markdown fences."""
                 return
 
             if entry := result.get("history_entry"):
-                memory.append_history(entry)
+                await memory.append_history(entry)
             if update := result.get("memory_update"):
                 if update != current_memory:
-                    memory.write_long_term(update)
+                    await memory.write_long_term(update)
 
             if archive_all:
                 session.last_consolidated = 0
