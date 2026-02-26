@@ -290,7 +290,7 @@ class AgentLoop:
             asyncio.create_task(self._consolidate_memory(session))
 
         self._set_tool_context(msg.channel, msg.chat_id)
-        initial_messages = self.context.build_messages(
+        initial_messages = await self.context.build_messages(
             history=session.get_history(max_messages=self.memory_window),
             current_message=msg.content,
             media=msg.media if msg.media else None,
@@ -339,7 +339,7 @@ class AgentLoop:
         session_key = f"{origin_channel}:{origin_chat_id}"
         session = self.sessions.get_or_create(session_key)
         self._set_tool_context(origin_channel, origin_chat_id)
-        initial_messages = self.context.build_messages(
+        initial_messages = await self.context.build_messages(
             history=session.get_history(max_messages=self.memory_window),
             current_message=msg.content,
             channel=origin_channel,
