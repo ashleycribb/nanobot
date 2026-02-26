@@ -1,7 +1,8 @@
 """Configuration schema using Pydantic."""
 
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
+
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 from pydantic_settings import BaseSettings
 
@@ -134,8 +135,8 @@ class MochatConfig(Base):
 class SlackDMConfig(Base):
     """Slack DM policy configuration."""
 
-    enabled: bool = True
-    policy: str = "open"  # "open" or "allowlist"
+    enabled: bool = False
+    policy: str = "allowlist"  # "open" or "allowlist"
     allow_from: list[str] = Field(default_factory=list)  # Allowed Slack user IDs
 
 
