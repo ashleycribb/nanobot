@@ -61,14 +61,17 @@ class HeartbeatService:
     def heartbeat_file(self) -> Path:
         return self.workspace / "HEARTBEAT.md"
     
-    def _read_heartbeat_file(self) -> str | None:
+    async def _read_heartbeat_file(self) -> str | None:
         """Read HEARTBEAT.md content."""
-        if self.heartbeat_file.exists():
-            try:
-                return self.heartbeat_file.read_text()
-            except Exception:
-                return None
-        return None
+        def _read() -> str | None:
+            if self.heartbeat_file.exists():
+                try:
+                    return self.heartbeat_file.read_text()
+                except Exception:
+                    return None
+            return None
+
+        return await asyncio.to_thread(_read)
     
     async def start(self) -> None:
         """Start the heartbeat service."""
@@ -101,7 +104,7 @@ class HeartbeatService:
     
     async def _tick(self) -> None:
         """Execute a single heartbeat tick."""
-        content = self._read_heartbeat_file()
+        content = await self._read_heartbeat_file()
         
         # Skip if HEARTBEAT.md is empty or doesn't exist
         if _is_heartbeat_empty(content):
