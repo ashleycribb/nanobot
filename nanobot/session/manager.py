@@ -1,5 +1,6 @@
 """Session management for conversation history."""
 
+import asyncio
 import json
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -102,6 +103,30 @@ class SessionManager:
         self._cache[key] = session
         return session
     
+    async def aget_or_create(self, key: str) -> Session:
+        """
+        Get an existing session or create a new one (async).
+
+        Args:
+            key: Session key (usually channel:chat_id).
+
+        Returns:
+            The session.
+        """
+        if key in self._cache:
+            return self._cache[key]
+
+        session = await asyncio.to_thread(self._load, key)
+        if session is None:
+            session = Session(key=key)
+
+        # Check cache again in case of race
+        if key in self._cache:
+            return self._cache[key]
+
+        self._cache[key] = session
+        return session
+
     def _load(self, key: str) -> Session | None:
         """Load a session from disk."""
         path = self._get_session_path(key)
@@ -150,7 +175,19 @@ class SessionManager:
     def save(self, session: Session) -> None:
         """Save a session to disk."""
         path = self._get_session_path(session.key)
+        self._write_to_disk(path, session.messages, session)
+        self._cache[session.key] = session
 
+    async def asave(self, session: Session) -> None:
+        """Save a session to disk (async)."""
+        path = self._get_session_path(session.key)
+        # Snapshot messages to ensure thread safety
+        messages = list(session.messages)
+        await asyncio.to_thread(self._write_to_disk, path, messages, session)
+        self._cache[session.key] = session
+
+    def _write_to_disk(self, path: Path, messages: list[dict], session: Session) -> None:
+        """Write session data to disk."""
         with open(path, "w") as f:
             metadata_line = {
                 "_type": "metadata",
@@ -160,10 +197,8 @@ class SessionManager:
                 "last_consolidated": session.last_consolidated
             }
             f.write(json.dumps(metadata_line) + "\n")
-            for msg in session.messages:
+            for msg in messages:
                 f.write(json.dumps(msg) + "\n")
-
-        self._cache[session.key] = session
     
     def invalidate(self, key: str) -> None:
         """Remove a session from the in-memory cache."""
