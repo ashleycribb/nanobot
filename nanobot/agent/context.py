@@ -1,5 +1,6 @@
 """Context builder for assembling agent prompts."""
 
+import asyncio
 import base64
 import mimetypes
 import platform
@@ -121,7 +122,7 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
         
         return "\n\n".join(parts) if parts else ""
     
-    def build_messages(
+    async def build_messages(
         self,
         history: list[dict[str, Any]],
         current_message: str,
@@ -156,24 +157,35 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
         messages.extend(history)
 
         # Current message (with optional image attachments)
-        user_content = self._build_user_content(current_message, media)
+        user_content = await self._build_user_content(current_message, media)
         messages.append({"role": "user", "content": user_content})
 
         return messages
 
-    def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
+    def _read_and_encode(self, path: Path) -> tuple[str, str] | None:
+        """Read and encode an image file in a worker thread."""
+        mime, _ = mimetypes.guess_type(str(path))
+        if not path.is_file() or not mime or not mime.startswith("image/"):
+            return None
+        return mime, base64.b64encode(path.read_bytes()).decode()
+
+    async def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
         """Build user message content with optional base64-encoded images."""
         if not media:
             return text
         
+        # Process all media files in parallel
+        tasks = [
+            asyncio.to_thread(self._read_and_encode, Path(path))
+            for path in media
+        ]
+        results = await asyncio.gather(*tasks)
+
         images = []
-        for path in media:
-            p = Path(path)
-            mime, _ = mimetypes.guess_type(path)
-            if not p.is_file() or not mime or not mime.startswith("image/"):
-                continue
-            b64 = base64.b64encode(p.read_bytes()).decode()
-            images.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
+        for result in results:
+            if result:
+                mime, b64 = result
+                images.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
         
         if not images:
             return text
