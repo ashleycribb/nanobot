@@ -3,6 +3,8 @@
 import httpx
 import typer
 from rich import print
+import sys
+import re
 
 app = typer.Typer()
 
@@ -32,6 +34,100 @@ def _reconstruct_abstract(inverted_index: dict | None) -> str:
     words.sort(key=lambda x: x[0])
     return " ".join(w[1] for w in words)
 
+def _clean_bibtex_key(text: str) -> str:
+    return re.sub(r'[^a-zA-Z0-9]', '', text)
+
+def _print_bibtex(item: dict):
+    """Generate and print BibTeX."""
+    title = item.get("title", "No Title") or "No Title"
+    authorships = item.get("authorships", [])
+
+    first_author_last = "Unknown"
+    if authorships:
+        author = authorships[0].get("author", {})
+        display_name = author.get("display_name", "")
+        if display_name:
+            first_author_last = display_name.split()[-1]
+
+    year = item.get("publication_year") or 0
+    first_word = title.split()[0] if title else "Title"
+
+    bib_key = f"{first_author_last}{year}{first_word}"
+    bib_key = _clean_bibtex_key(bib_key)
+
+    # Authors list
+    author_names = []
+    for a in authorships:
+        name = a.get("author", {}).get("display_name", "")
+        if name:
+            author_names.append(name)
+    authors_bib = " and ".join(author_names) if author_names else "Unknown"
+
+    venue_info = item.get("primary_location", {}) or {}
+    source = venue_info.get("source", {}) or {}
+    venue = source.get("display_name", "Unknown Venue")
+
+    doi = item.get("doi", "")
+
+    print("\n[yellow]BibTeX:[/yellow]")
+    print(f"@article{{{bib_key},")
+    print(f"  title = {{{title}}},")
+    print(f"  author = {{{authors_bib}}},")
+    print(f"  journal = {{{venue}}},")
+    print(f"  year = {{{year}}},")
+    if doi:
+        print(f"  doi = {{{doi.replace('https://doi.org/', '')}}},")
+    print("}")
+
+def _print_work(item: dict, full_abstract: bool = False, show_bibtex: bool = False):
+    """Print work details."""
+    title = item.get("title", "No Title")
+    authorships = item.get("authorships", [])
+
+    author_names = []
+    for a in authorships[:5]: # limit to 5 authors for display
+        name = a.get("author", {}).get("display_name", "")
+        if name:
+            author_names.append(name)
+    if len(authorships) > 5:
+        author_names.append("et al.")
+    authors = ", ".join(author_names)
+
+    year = item.get("publication_year", "")
+    doi = item.get("doi", "")
+    work_id = item.get("id", "").replace("https://openalex.org/", "")
+
+    # Open Access
+    oa = item.get("open_access", {})
+    oa_url = oa.get("oa_url")
+    is_oa = oa.get("is_oa", False)
+
+    # Venue
+    loc = item.get("primary_location", {}) or {}
+    source = loc.get("source", {}) or {}
+    venue = source.get("display_name", "Unknown Venue")
+
+    abstract_idx = item.get("abstract_inverted_index")
+    abstract = _reconstruct_abstract(abstract_idx)
+
+    print(f"\n[bold]{title}[/bold] (ID: {work_id})")
+    print(f"Authors: {authors}")
+    print(f"Published in: {venue} ({year})")
+    if doi:
+        print(f"DOI: {doi}")
+    if is_oa and oa_url:
+        print(f"[green]Open Access PDF:[/green] {oa_url}")
+
+    if abstract:
+        if full_abstract:
+             print(f"\n[bold]Abstract:[/bold]\n{abstract}")
+        else:
+            display_abstract = abstract[:500] + "..." if len(abstract) > 500 else abstract
+            print(f"[dim]Abstract: {display_abstract}[/dim]")
+
+    if show_bibtex:
+        _print_bibtex(item)
+
 @app.command()
 def topics(query: str):
     """Find research topics related to a query."""
@@ -59,23 +155,90 @@ def search(query: str, limit: int = 5):
         return
 
     for item in results:
-        title = item.get("title", "No Title")
-        authorships = item.get("authorships", [])
-        authors = ", ".join([a.get("author", {}).get("display_name", "") for a in authorships])
-        year = item.get("publication_year", "")
-        doi = item.get("doi", "")
-        abstract_idx = item.get("abstract_inverted_index")
-        abstract = _reconstruct_abstract(abstract_idx)
+        _print_work(item)
 
-        print(f"\n[bold]{title}[/bold]")
-        print(f"Authors: {authors}")
-        print(f"Year: {year}")
-        if doi:
-            print(f"DOI: {doi}")
-        if abstract:
-            # Truncate abstract if too long for display
-            display_abstract = abstract[:500] + "..." if len(abstract) > 500 else abstract
-            print(f"[dim]Abstract: {display_abstract}[/dim]")
+@app.command()
+def lookup(work_id: str):
+    """Lookup a paper by OpenAlex ID or DOI."""
+    # Handle DOI input
+    if work_id.startswith("10."):
+        work_id = f"https://doi.org/{work_id}"
+
+    endpoint = f"works/{work_id}"
+    # If full URL provided, extract ID
+    if "openalex.org/works/" in work_id:
+        endpoint = f"works/{work_id.split('/')[-1]}"
+
+    try:
+        response = httpx.get(f"{OPENALEX_API_URL}/{endpoint}", timeout=10.0)
+        response.raise_for_status()
+        item = response.json()
+        _print_work(item, full_abstract=True, show_bibtex=True)
+    except httpx.HTTPError as e:
+         print(f"[bold red]Error looking up '{work_id}':[/bold red] {e}")
+
+@app.command()
+def related(work_id: str, limit: int = 5):
+    """Find related papers based on a given paper ID."""
+
+    # First resolve the paper ID to get its concept/related works
+    try:
+        # Handle DOI input
+        if work_id.startswith("10."):
+            lookup_id = f"https://doi.org/{work_id}"
+        elif not work_id.startswith("http") and not work_id.startswith("W"):
+            lookup_id = work_id # Assuming simple ID
+        else:
+            lookup_id = work_id
+
+        endpoint = f"works/{lookup_id}"
+        if "openalex.org/works/" in lookup_id:
+            endpoint = f"works/{lookup_id.split('/')[-1]}"
+
+        response = httpx.get(f"{OPENALEX_API_URL}/{endpoint}", timeout=10.0)
+        response.raise_for_status()
+        item = response.json()
+
+        print(f"[bold]Finding papers related to: {item.get('title')}[/bold]")
+
+        related_urls = item.get("related_works", [])
+        if not related_urls:
+            print(f"No related works found for {work_id}")
+            return
+
+        # Limit the number of IDs to fetch
+        related_urls = related_urls[:limit]
+
+        # Build filter query: ids.openalex:url1|url2...
+        filter_query = "|".join(related_urls)
+
+        data = _fetch("works", {"filter": f"ids.openalex:{filter_query}"})
+        results = data.get("results", [])
+
+        for res in results:
+            _print_work(res)
+
+    except httpx.HTTPError as e:
+         print(f"[bold red]Error finding related works for '{work_id}':[/bold red] {e}")
+
+@app.command()
+def bibtex(work_id: str):
+    """Generate BibTeX for a paper."""
+    try:
+        if work_id.startswith("10."):
+             work_id = f"https://doi.org/{work_id}"
+
+        endpoint = f"works/{work_id}"
+        if "openalex.org/works/" in work_id:
+            endpoint = f"works/{work_id.split('/')[-1]}"
+
+        response = httpx.get(f"{OPENALEX_API_URL}/{endpoint}", timeout=10.0)
+        response.raise_for_status()
+        item = response.json()
+        _print_bibtex(item)
+    except httpx.HTTPError as e:
+        print(f"[bold red]Error generating BibTeX for '{work_id}':[/bold red] {e}")
+
 
 @app.command()
 def bibliography(query: str, limit: int = 5):
@@ -89,23 +252,7 @@ def bibliography(query: str, limit: int = 5):
 
     print(f"# Bibliography for '{query}'\n")
     for item in results:
-        title = item.get("title", "No Title")
-        authorships = item.get("authorships", [])
-        authors = ", ".join([a.get("author", {}).get("display_name", "") for a in authorships])
-        year = item.get("publication_year", "")
-        doi = item.get("doi", "")
-        cited_by = item.get("cited_by_count", 0)
-        abstract_idx = item.get("abstract_inverted_index")
-        abstract = _reconstruct_abstract(abstract_idx)
-
-        print(f"**{title}** ({year}). {authors}.")
-        if doi:
-            print(f"DOI: {doi}")
-        print(f"Cited by: {cited_by}")
-        if abstract:
-            # Truncate abstract if too long
-            display_abstract = abstract[:300] + "..." if len(abstract) > 300 else abstract
-            print(f"> Abstract: {display_abstract}")
+        _print_work(item, full_abstract=False, show_bibtex=False)
         print()
 
 @app.command()
