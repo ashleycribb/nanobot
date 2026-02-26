@@ -182,6 +182,13 @@ class ChannelManager:
             except Exception as e:
                 logger.error(f"Error stopping {name}: {e}")
     
+    async def _send_message_safe(self, channel: BaseChannel, msg: OutboundMessage) -> None:
+        """Send a message and log any errors."""
+        try:
+            await channel.send(msg)
+        except Exception as e:
+            logger.error(f"Error sending to {msg.channel}: {e}")
+
     async def _dispatch_outbound(self) -> None:
         """Dispatch outbound messages to the appropriate channel."""
         logger.info("Outbound dispatcher started")
@@ -195,10 +202,7 @@ class ChannelManager:
                 
                 channel = self.channels.get(msg.channel)
                 if channel:
-                    try:
-                        await channel.send(msg)
-                    except Exception as e:
-                        logger.error(f"Error sending to {msg.channel}: {e}")
+                    asyncio.create_task(self._send_message_safe(channel, msg))
                 else:
                     logger.warning(f"Unknown channel: {msg.channel}")
                     
