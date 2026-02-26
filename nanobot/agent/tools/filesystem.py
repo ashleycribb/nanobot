@@ -1,5 +1,6 @@
 """File system tools: read, write, edit."""
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -135,26 +136,30 @@ class EditFileTool(Tool):
             "required": ["path", "old_text", "new_text"]
         }
     
+    def _edit_file_sync(self, file_path: Path, old_text: str, new_text: str) -> str:
+        """Synchronous file editing logic to be run in a thread."""
+        if not file_path.exists():
+            return f"Error: File not found: {file_path}"
+
+        content = file_path.read_text(encoding="utf-8")
+
+        if old_text not in content:
+            return f"Error: old_text not found in file. Make sure it matches exactly."
+
+        # Count occurrences
+        count = content.count(old_text)
+        if count > 1:
+            return f"Warning: old_text appears {count} times. Please provide more context to make it unique."
+
+        new_content = content.replace(old_text, new_text, 1)
+        file_path.write_text(new_content, encoding="utf-8")
+
+        return f"Successfully edited {file_path}"
+
     async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
         try:
             file_path = _resolve_path(path, self._allowed_dir)
-            if not file_path.exists():
-                return f"Error: File not found: {path}"
-            
-            content = file_path.read_text(encoding="utf-8")
-            
-            if old_text not in content:
-                return f"Error: old_text not found in file. Make sure it matches exactly."
-            
-            # Count occurrences
-            count = content.count(old_text)
-            if count > 1:
-                return f"Warning: old_text appears {count} times. Please provide more context to make it unique."
-            
-            new_content = content.replace(old_text, new_text, 1)
-            file_path.write_text(new_content, encoding="utf-8")
-            
-            return f"Successfully edited {path}"
+            return await asyncio.to_thread(self._edit_file_sync, file_path, old_text, new_text)
         except PermissionError as e:
             return f"Error: {e}"
         except Exception as e:
