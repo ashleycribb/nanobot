@@ -1,5 +1,6 @@
 """File system tools: read, write, edit."""
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -49,7 +50,7 @@ class ReadFileTool(Tool):
             if not file_path.is_file():
                 return f"Error: Not a file: {path}"
             
-            content = file_path.read_text(encoding="utf-8")
+            content = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
             return content
         except PermissionError as e:
             return f"Error: {e}"
@@ -91,8 +92,12 @@ class WriteFileTool(Tool):
     async def execute(self, path: str, content: str, **kwargs: Any) -> str:
         try:
             file_path = _resolve_path(path, self._allowed_dir)
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            file_path.write_text(content, encoding="utf-8")
+
+            def write_operation():
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                file_path.write_text(content, encoding="utf-8")
+
+            await asyncio.to_thread(write_operation)
             return f"Successfully wrote {len(content)} bytes to {path}"
         except PermissionError as e:
             return f"Error: {e}"
@@ -141,7 +146,7 @@ class EditFileTool(Tool):
             if not file_path.exists():
                 return f"Error: File not found: {path}"
             
-            content = file_path.read_text(encoding="utf-8")
+            content = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
             
             if old_text not in content:
                 return f"Error: old_text not found in file. Make sure it matches exactly."
@@ -152,7 +157,7 @@ class EditFileTool(Tool):
                 return f"Warning: old_text appears {count} times. Please provide more context to make it unique."
             
             new_content = content.replace(old_text, new_text, 1)
-            file_path.write_text(new_content, encoding="utf-8")
+            await asyncio.to_thread(file_path.write_text, new_content, encoding="utf-8")
             
             return f"Successfully edited {path}"
         except PermissionError as e:
@@ -196,10 +201,14 @@ class ListDirTool(Tool):
             if not dir_path.is_dir():
                 return f"Error: Not a directory: {path}"
             
-            items = []
-            for item in sorted(dir_path.iterdir()):
-                prefix = "📁 " if item.is_dir() else "📄 "
-                items.append(f"{prefix}{item.name}")
+            def list_contents():
+                items = []
+                for item in sorted(dir_path.iterdir()):
+                    prefix = "📁 " if item.is_dir() else "📄 "
+                    items.append(f"{prefix}{item.name}")
+                return items
+
+            items = await asyncio.to_thread(list_contents)
             
             if not items:
                 return f"Directory {path} is empty"
