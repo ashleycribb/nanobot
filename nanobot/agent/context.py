@@ -25,7 +25,7 @@ class ContextBuilder:
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
     
-    def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
+    async def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
         """
         Build the system prompt from bootstrap files, memory, and skills.
         
@@ -46,7 +46,7 @@ class ContextBuilder:
             parts.append(bootstrap)
         
         # Memory context
-        memory = self.memory.get_memory_context()
+        memory = await self.memory.get_memory_context()
         if memory:
             parts.append(f"# Memory\n\n{memory}")
         
@@ -121,7 +121,7 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
         
         return "\n\n".join(parts) if parts else ""
     
-    def build_messages(
+    async def build_messages(
         self,
         history: list[dict[str, Any]],
         current_message: str,
@@ -147,7 +147,7 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
         messages = []
 
         # System prompt
-        system_prompt = self.build_system_prompt(skill_names)
+        system_prompt = await self.build_system_prompt(skill_names)
         if channel and chat_id:
             system_prompt += f"\n\n## Current Session\nChannel: {channel}\nChat ID: {chat_id}"
         messages.append({"role": "system", "content": system_prompt})
