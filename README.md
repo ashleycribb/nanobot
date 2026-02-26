@@ -100,7 +100,7 @@ pip install nanobot-ai
 ## 🚀 Quick Start
 
 > [!TIP]
-> Set your API key in `~/.nanobot/config.json`.
+> Set your API key in `~/.nanobot/config.json` or as an environment variable (see [Cloud Deployment](#-cloud-deployment)).
 > Get API keys: [OpenRouter](https://openrouter.ai/keys) (Global) · [Brave Search](https://brave.com/search/api/) (optional, for web search)
 
 **1. Initialize**
@@ -845,6 +845,12 @@ docker run -v ~/.nanobot:/root/.nanobot -p 18790:18790 nanobot gateway
 docker run -v ~/.nanobot:/root/.nanobot --rm nanobot agent -m "Hello!"
 docker run -v ~/.nanobot:/root/.nanobot --rm nanobot status
 ```
+
+## ☁️ Cloud Deployment
+
+nanobot supports configuration via **Environment Variables** (`NANOBOT_CONFIG_JSON` or individual vars like `NANOBOT_PROVIDERS__OPENAI__API_KEY`), making it easy to deploy on platforms like Railway, Render, or Heroku.
+
+👉 See [DEPLOY.md](DEPLOY.md) for detailed cloud deployment guides.
 
 ## 📁 Project Structure
 

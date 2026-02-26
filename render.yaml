@@ -1,0 +1,10 @@
+services:
+  - type: pserv
+    name: nanobot
+    env: docker
+    plan: free
+    buildCommand: docker build -t nanobot .
+    startCommand: nanobot gateway
+    envVars:
+      - key: NANOBOT_CONFIG_JSON
+        sync: false
