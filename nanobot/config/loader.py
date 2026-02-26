@@ -1,6 +1,7 @@
 """Configuration loading utilities."""
 
 import json
+import os
 from pathlib import Path
 
 from nanobot.config.schema import Config
@@ -29,17 +30,30 @@ def load_config(config_path: Path | None = None) -> Config:
     """
     path = config_path or get_config_path()
 
+    data = {}
+
+    # 1. Load from file if exists
     if path.exists():
         try:
             with open(path) as f:
-                data = json.load(f)
-            data = _migrate_config(data)
-            return Config.model_validate(data)
+                file_data = json.load(f)
+            data = _migrate_config(file_data)
         except (json.JSONDecodeError, ValueError) as e:
             print(f"Warning: Failed to load config from {path}: {e}")
-            print("Using default configuration.")
+            print("Using default configuration or environment variables.")
 
-    return Config()
+    # 2. Load from environment variable (JSON blob)
+    env_config_json = os.environ.get("NANOBOT_CONFIG_JSON")
+    if env_config_json:
+        try:
+            env_data = json.loads(env_config_json)
+            env_data = _migrate_config(env_data)
+            _deep_merge(data, env_data)
+        except json.JSONDecodeError as e:
+            print(f"Warning: Failed to parse NANOBOT_CONFIG_JSON: {e}")
+
+    # 3. Create Config object (Pydantic will also read individual env vars for missing fields)
+    return Config(**data)
 
 
 def save_config(config: Config, config_path: Path | None = None) -> None:
@@ -63,7 +77,31 @@ def _migrate_config(data: dict) -> dict:
     """Migrate old config formats to current."""
     # Move tools.exec.restrictToWorkspace → tools.restrictToWorkspace
     tools = data.get("tools", {})
-    exec_cfg = tools.get("exec", {})
-    if "restrictToWorkspace" in exec_cfg and "restrictToWorkspace" not in tools:
-        tools["restrictToWorkspace"] = exec_cfg.pop("restrictToWorkspace")
+    if isinstance(tools, dict):
+        exec_cfg = tools.get("exec", {})
+        if isinstance(exec_cfg, dict) and "restrictToWorkspace" in exec_cfg and "restrictToWorkspace" not in tools:
+            tools["restrictToWorkspace"] = exec_cfg.pop("restrictToWorkspace")
     return data
+
+
+def _deep_merge(target: dict, source: dict) -> dict:
+    """
+    Recursively merge source dictionary into target dictionary.
+
+    Args:
+        target: The dictionary to merge into.
+        source: The dictionary with updates.
+
+    Returns:
+        The updated target dictionary.
+    """
+    for k, v in source.items():
+        if (
+            k in target
+            and isinstance(target[k], dict)
+            and isinstance(v, dict)
+        ):
+            _deep_merge(target[k], v)
+        else:
+            target[k] = v
+    return target
