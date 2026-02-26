@@ -1,5 +1,6 @@
 """Session management for conversation history."""
 
+import asyncio
 import json
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -147,8 +148,13 @@ class SessionManager:
             logger.warning(f"Failed to load session {key}: {e}")
             return None
     
-    def save(self, session: Session) -> None:
+    async def save(self, session: Session) -> None:
         """Save a session to disk."""
+        await asyncio.to_thread(self._save_to_disk, session)
+        self._cache[session.key] = session
+
+    def _save_to_disk(self, session: Session) -> None:
+        """Write session data to disk (blocking)."""
         path = self._get_session_path(session.key)
 
         with open(path, "w") as f:
@@ -162,8 +168,6 @@ class SessionManager:
             f.write(json.dumps(metadata_line) + "\n")
             for msg in session.messages:
                 f.write(json.dumps(msg) + "\n")
-
-        self._cache[session.key] = session
     
     def invalidate(self, key: str) -> None:
         """Remove a session from the in-memory cache."""

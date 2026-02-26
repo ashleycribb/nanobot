@@ -271,7 +271,7 @@ class AgentLoop:
             # Capture messages before clearing (avoid race condition with background task)
             messages_to_archive = session.messages.copy()
             session.clear()
-            self.sessions.save(session)
+            await self.sessions.save(session)
             self.sessions.invalidate(session.key)
 
             async def _consolidate_and_cleanup():
@@ -308,7 +308,7 @@ class AgentLoop:
         session.add_message("user", msg.content)
         session.add_message("assistant", final_content,
                             tools_used=tools_used if tools_used else None)
-        self.sessions.save(session)
+        await self.sessions.save(session)
         
         return OutboundMessage(
             channel=msg.channel,
@@ -352,7 +352,7 @@ class AgentLoop:
         
         session.add_message("user", f"[System: {msg.sender_id}] {msg.content}")
         session.add_message("assistant", final_content)
-        self.sessions.save(session)
+        await self.sessions.save(session)
         
         return OutboundMessage(
             channel=origin_channel,
