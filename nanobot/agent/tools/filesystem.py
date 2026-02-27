@@ -42,8 +42,19 @@ class ReadFileTool(Tool):
             "required": ["path"]
         }
     
+    @staticmethod
+    def _read_sync(path: str, allowed_dir: Path | None) -> str:
+        file_path = _resolve_path(path, allowed_dir)
+        if not file_path.exists():
+            return f"Error: File not found: {path}"
+        if not file_path.is_file():
+            return f"Error: Not a file: {path}"
+
+        return file_path.read_text(encoding="utf-8")
+
     async def execute(self, path: str, **kwargs: Any) -> str:
         try:
+            return await asyncio.to_thread(self._read_sync, path, self._allowed_dir)
             file_path = _resolve_path(path, self._allowed_dir)
             if not file_path.exists():
                 return f"Error: File not found: {path}"
@@ -89,6 +100,16 @@ class WriteFileTool(Tool):
             "required": ["path", "content"]
         }
     
+    @staticmethod
+    def _write_sync(path: str, content: str, allowed_dir: Path | None) -> str:
+        file_path = _resolve_path(path, allowed_dir)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content, encoding="utf-8")
+        return f"Successfully wrote {len(content)} bytes to {path}"
+
+    async def execute(self, path: str, content: str, **kwargs: Any) -> str:
+        try:
+            return await asyncio.to_thread(self._write_sync, path, content, self._allowed_dir)
     def _write_sync(self, file_path: Path, content: str, path_str: str) -> str:
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content, encoding="utf-8")
@@ -139,6 +160,11 @@ class EditFileTool(Tool):
             "required": ["path", "old_text", "new_text"]
         }
     
+    @staticmethod
+    def _edit_sync(path: str, old_text: str, new_text: str, allowed_dir: Path | None) -> str:
+        file_path = _resolve_path(path, allowed_dir)
+        if not file_path.exists():
+            return f"Error: File not found: {path}"
     def _edit_file_sync(self, file_path: Path, old_text: str, new_text: str) -> str:
         """Synchronous file editing logic to be run in a thread."""
         if not file_path.exists():
@@ -160,6 +186,11 @@ class EditFileTool(Tool):
         new_content = content.replace(old_text, new_text, 1)
         file_path.write_text(new_content, encoding="utf-8")
 
+        return f"Successfully edited {path}"
+
+    async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
+        try:
+            return await asyncio.to_thread(self._edit_sync, path, old_text, new_text, self._allowed_dir)
         return f"Successfully edited {file_path}"
         return f"Successfully edited {path_str}"
 
@@ -201,6 +232,13 @@ class ListDirTool(Tool):
             "required": ["path"]
         }
     
+    @staticmethod
+    def _list_sync(path: str, allowed_dir: Path | None) -> str:
+        dir_path = _resolve_path(path, allowed_dir)
+        if not dir_path.exists():
+            return f"Error: Directory not found: {path}"
+        if not dir_path.is_dir():
+            return f"Error: Not a directory: {path}"
     def _list_sync(self, dir_path: Path, path_str: str) -> str:
         if not dir_path.exists():
             return f"Error: Directory not found: {path_str}"
@@ -213,12 +251,14 @@ class ListDirTool(Tool):
             items.append(f"{prefix}{item.name}")
 
         if not items:
+            return f"Directory {path} is empty"
             return f"Directory {path_str} is empty"
 
         return "\n".join(items)
 
     async def execute(self, path: str, **kwargs: Any) -> str:
         try:
+            return await asyncio.to_thread(self._list_sync, path, self._allowed_dir)
             dir_path = _resolve_path(path, self._allowed_dir)
             return await asyncio.to_thread(self._list_sync, dir_path, path)
         except PermissionError as e:
