@@ -187,6 +187,30 @@ class SessionManager:
 
         await asyncio.to_thread(self._write_to_disk, path, metadata_line, messages_snapshot)
 
+    async def save(self, session: Session) -> None:
+        """Save a session to disk (async)."""
+        # Snapshot state in main thread to avoid concurrency issues during thread execution
+        messages = list(session.messages)
+        metadata = session.metadata.copy()
+        created_at = session.created_at
+        updated_at = session.updated_at
+        last_consolidated = session.last_consolidated
+        path = self._get_session_path(session.key)
+
+        def _write():
+            with open(path, "w") as f:
+                metadata_line = {
+                    "_type": "metadata",
+                    "created_at": created_at.isoformat(),
+                    "updated_at": updated_at.isoformat(),
+                    "metadata": metadata,
+                    "last_consolidated": last_consolidated
+                }
+                f.write(json.dumps(metadata_line) + "\n")
+                for msg in messages:
+                    f.write(json.dumps(msg) + "\n")
+
+        await asyncio.to_thread(_write)
         self._cache[session.key] = session
     
     def invalidate(self, key: str) -> None:
