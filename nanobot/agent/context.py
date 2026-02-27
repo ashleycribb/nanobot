@@ -24,6 +24,7 @@ class ContextBuilder:
         self.workspace = workspace
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
+        self._bootstrap_cache = {}  # {filename: (mtime, content)}
     
     def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
         """
@@ -110,14 +111,32 @@ When remembering something important, write to {workspace_path}/memory/MEMORY.md
 To recall past events, grep {workspace_path}/memory/HISTORY.md"""
     
     def _load_bootstrap_files(self) -> str:
-        """Load all bootstrap files from workspace."""
+        """Load all bootstrap files from workspace (with mtime caching)."""
         parts = []
         
         for filename in self.BOOTSTRAP_FILES:
             file_path = self.workspace / filename
-            if file_path.exists():
-                content = file_path.read_text(encoding="utf-8")
+            try:
+                stat = file_path.stat()
+                mtime = stat.st_mtime
+
+                # Check cache
+                cached_mtime, cached_content = self._bootstrap_cache.get(filename, (0, None))
+
+                if mtime != cached_mtime or cached_content is None:
+                    # File changed or not cached
+                    content = file_path.read_text(encoding="utf-8")
+                    self._bootstrap_cache[filename] = (mtime, content)
+                else:
+                    # Use cached
+                    content = cached_content
+
                 parts.append(f"## {filename}\n\n{content}")
+            except FileNotFoundError:
+                # File doesn't exist (or was deleted), clear from cache if present
+                if filename in self._bootstrap_cache:
+                    del self._bootstrap_cache[filename]
+                continue
         
         return "\n\n".join(parts) if parts else ""
     
