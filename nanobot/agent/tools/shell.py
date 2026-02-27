@@ -83,6 +83,9 @@ class ExecTool(Tool):
             process = await asyncio.create_subprocess_exec(
                 program,
                 *arguments,
+            process = await asyncio.create_subprocess_exec(
+                args[0],
+                *args[1:],
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
@@ -119,6 +122,9 @@ class ExecTool(Tool):
             
             return result
             
+        except FileNotFoundError:
+            # Handle case where executable is not found
+            return f"Error: Command not found: {args[0] if 'args' in locals() and args else command}"
         except Exception as e:
             return f"Error executing command: {str(e)}"
 

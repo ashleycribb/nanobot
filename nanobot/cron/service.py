@@ -313,21 +313,28 @@ class CronService:
         
         return removed
     
-    def enable_job(self, job_id: str, enabled: bool = True) -> CronJob | None:
-        """Enable or disable a job."""
+    def _update_job(self, job_id: str, modifier: Callable[[CronJob], None]) -> CronJob | None:
+        """Helper to update a job safely."""
         store = self._load_store()
         for job in store.jobs:
             if job.id == job_id:
-                job.enabled = enabled
+                modifier(job)
                 job.updated_at_ms = _now_ms()
-                if enabled:
-                    job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
-                else:
-                    job.state.next_run_at_ms = None
                 self._save_store()
                 self._arm_timer()
                 return job
         return None
+
+    def enable_job(self, job_id: str, enabled: bool = True) -> CronJob | None:
+        """Enable or disable a job."""
+        def modifier(job: CronJob):
+            job.enabled = enabled
+            if enabled:
+                job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
+            else:
+                job.state.next_run_at_ms = None
+
+        return self._update_job(job_id, modifier)
     
     async def run_job(self, job_id: str, force: bool = False) -> bool:
         """Manually run a job."""
