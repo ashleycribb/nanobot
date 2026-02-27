@@ -1,5 +1,6 @@
 """Context builder for assembling agent prompts."""
 
+import asyncio
 import base64
 import mimetypes
 import platform
@@ -175,24 +176,39 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
         messages.extend(history)
 
         # Current message (with optional image attachments)
-        user_content = self._build_user_content(current_message, media)
+        user_content = await self._build_user_content(current_message, media)
         messages.append({"role": "user", "content": user_content})
 
         return messages
 
-    def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
+    async def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
         """Build user message content with optional base64-encoded images."""
         if not media:
             return text
         
-        images = []
-        for path in media:
-            p = Path(path)
-            mime, _ = mimetypes.guess_type(path)
+        def _sync_process_image(path_str: str) -> dict[str, str] | None:
+            p = Path(path_str)
+            mime, _ = mimetypes.guess_type(path_str)
+
             if not p.is_file() or not mime or not mime.startswith("image/"):
-                continue
-            b64 = base64.b64encode(p.read_bytes()).decode()
-            images.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
+                return None
+
+            content = p.read_bytes()
+            b64 = base64.b64encode(content)
+            return {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64.decode()}"}
+            }
+
+        async def _read_and_encode_image(path_str: str) -> dict[str, str] | None:
+            # Run the entire file I/O + CPU intensive encoding in a separate thread
+            return await asyncio.to_thread(_sync_process_image, path_str)
+
+        # Process all media in parallel
+        tasks = [_read_and_encode_image(path) for path in media]
+        results = await asyncio.gather(*tasks)
+
+        images = [r for r in results if r is not None]
         
         if not images:
             return text
