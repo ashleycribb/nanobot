@@ -3,6 +3,7 @@
 import asyncio
 import os
 import re
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -67,8 +68,16 @@ class ExecTool(Tool):
             return guard_error
         
         try:
-            process = await asyncio.create_subprocess_shell(
-                command,
+            try:
+                args = shlex.split(command)
+            except ValueError as e:
+                return f"Error parsing command arguments: {str(e)}"
+
+            if not args:
+                return "Error: Empty command"
+
+            process = await asyncio.create_subprocess_exec(
+                *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
