@@ -18,7 +18,9 @@ class WhatsAppConfig(Base):
     enabled: bool = False
     bridge_url: str = "ws://localhost:3001"
     bridge_token: str = ""  # Shared token for bridge auth (optional, recommended)
-    allow_from: list[str] = Field(default_factory=list)  # Allowed phone numbers
+    allow_from: list[str] = Field(
+        default_factory=lambda: ["__explicit_allow_list_required__"]
+    )  # Allowed phone numbers
 
 
 class TelegramConfig(Base):
