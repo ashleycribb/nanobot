@@ -28,6 +28,7 @@ class ChannelManager:
         self.bus = bus
         self.channels: dict[str, BaseChannel] = {}
         self._dispatch_task: asyncio.Task | None = None
+        self._active_tasks: dict[str, asyncio.Task] = {}
         
         self._init_channels()
     
@@ -181,6 +182,13 @@ class ChannelManager:
             except asyncio.CancelledError:
                 pass
         
+        # Cancel all active message tasks
+        for task in self._active_tasks.values():
+            task.cancel()
+        if self._active_tasks:
+            await asyncio.gather(*self._active_tasks.values(), return_exceptions=True)
+        self._active_tasks.clear()
+
         # Stop all channels
         for name, channel in self.channels.items():
             try:
@@ -188,6 +196,66 @@ class ChannelManager:
                 logger.info(f"Stopped {name} channel")
             except Exception as e:
                 logger.error(f"Error stopping {name}: {e}")
+
+
+    async def _process_message(
+        self,
+        previous_task: asyncio.Task | None,
+        channel: BaseChannel,
+        msg: OutboundMessage
+    ) -> None:
+        """Process message sequentially for a specific chat."""
+        if previous_task:
+            try:
+                await previous_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.warning(f"Previous message task failed: {e}")
+
+        try:
+            await channel.send(msg)
+        except Exception as e:
+            logger.error(f"Error sending to {msg.channel}: {e}")
+
+    async def _dispatch_outbound(self) -> None:
+        """Dispatch outbound messages to the appropriate channel."""
+        logger.info("Outbound dispatcher started")
+        
+        while True:
+            try:
+                msg = await asyncio.wait_for(
+                    self.bus.consume_outbound(),
+                    timeout=1.0
+                )
+                
+                channel = self.channels.get(msg.channel)
+                if channel:
+                    # Create a unique key for channel+chat
+                    key = f"{msg.channel}:{msg.chat_id}"
+                    previous_task = self._active_tasks.get(key)
+
+                    # Create new task chaining off previous one
+                    task = asyncio.create_task(
+                        self._process_message(previous_task, channel, msg)
+                    )
+
+                    self._active_tasks[key] = task
+
+                    def done_callback(t: asyncio.Task, k: str = key) -> None:
+                        # Only cleanup if this is still the active task for the key
+                        if self._active_tasks.get(k) == t:
+                            del self._active_tasks[k]
+
+                    task.add_done_callback(done_callback)
+
+                else:
+                    logger.warning(f"Unknown channel: {msg.channel}")
+                    
+            except asyncio.TimeoutError:
+                continue
+            except asyncio.CancelledError:
+                break
     
     def get_channel(self, name: str) -> BaseChannel | None:
         """Get a channel by name."""
