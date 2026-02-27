@@ -42,7 +42,7 @@ class ExecTool(Tool):
     
     @property
     def description(self) -> str:
-        return "Execute a shell command and return its output. Use with caution."
+        return "Execute a command and return its output. Note: Shell features like pipes, redirection, and chaining are not supported."
     
     @property
     def parameters(self) -> dict[str, Any]:
@@ -68,6 +68,7 @@ class ExecTool(Tool):
             return guard_error
         
         try:
+            # Parse command string into list of arguments to avoid shell injection
             try:
                 args = shlex.split(command)
             except ValueError as e:
@@ -76,6 +77,12 @@ class ExecTool(Tool):
             if not args:
                 return "Error: Empty command"
 
+            program = args[0]
+            arguments = args[1:]
+
+            process = await asyncio.create_subprocess_exec(
+                program,
+                *arguments,
             process = await asyncio.create_subprocess_exec(
                 args[0],
                 *args[1:],
