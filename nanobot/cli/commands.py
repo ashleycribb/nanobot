@@ -442,6 +442,71 @@ def gateway(
 # ============================================================================
 
 
+def _get_thinking_context(logs: bool):
+    """Get the appropriate thinking context manager based on logs setting."""
+    if logs:
+        from contextlib import nullcontext
+        return nullcontext()
+    # Animated spinner is safe to use with prompt_toolkit input handling
+    return console.status("[dim]nanobot is thinking...[/dim]", spinner="dots")
+
+
+async def _run_single_message(agent_loop, message: str, session_id: str, markdown: bool, logs: bool):
+    """Run agent for a single message."""
+    try:
+        with _get_thinking_context(logs):
+            response = await agent_loop.process_direct(message, session_id)
+        _print_agent_response(response, render_markdown=markdown)
+    finally:
+        await agent_loop.close_mcp()
+
+
+async def _run_interactive_loop(agent_loop, session_id: str, markdown: bool, logs: bool):
+    """Run agent in interactive loop."""
+    try:
+        while True:
+            try:
+                _flush_pending_tty_input()
+                user_input = await _read_interactive_input_async()
+                command = user_input.strip()
+                if not command:
+                    continue
+
+                if _is_exit_command(command):
+                    _restore_terminal()
+                    console.print("\nGoodbye!")
+                    break
+
+                with _get_thinking_context(logs):
+                    response = await agent_loop.process_direct(user_input, session_id)
+                _print_agent_response(response, render_markdown=markdown)
+            except KeyboardInterrupt:
+                _restore_terminal()
+                console.print("\nGoodbye!")
+                break
+            except EOFError:
+                _restore_terminal()
+                console.print("\nGoodbye!")
+                break
+    finally:
+        await agent_loop.close_mcp()
+
+
+def _run_interactive_mode(agent_loop, session_id: str, markdown: bool, logs: bool):
+    """Setup and run interactive mode."""
+    _init_prompt_session()
+    console.print(f"{__logo__} Interactive mode (type [bold]exit[/bold] or [bold]Ctrl+C[/bold] to quit)\n")
+
+    def _exit_on_sigint(signum, frame):
+        _restore_terminal()
+        console.print("\nGoodbye!")
+        os._exit(0)
+
+    signal.signal(signal.SIGINT, _exit_on_sigint)
+
+    asyncio.run(_run_interactive_loop(agent_loop, session_id, markdown, logs))
+
+
 @app.command()
 def agent(
     message: str = typer.Option(None, "--message", "-m", help="Message to send to the agent"),
@@ -455,9 +520,9 @@ def agent(
     from nanobot.agent.loop import AgentLoop
     from nanobot.cron.service import CronService
     from loguru import logger
-    
+
     config = load_config()
-    
+
     bus = MessageBus()
     provider = _make_provider(config)
 
@@ -469,7 +534,7 @@ def agent(
         logger.enable("nanobot")
     else:
         logger.disable("nanobot")
-    
+
     agent_loop = AgentLoop(
         bus=bus,
         provider=provider,
@@ -485,66 +550,11 @@ def agent(
         restrict_to_workspace=config.tools.restrict_to_workspace,
         mcp_servers=config.tools.mcp_servers,
     )
-    
-    # Show spinner when logs are off (no output to miss); skip when logs are on
-    def _thinking_ctx():
-        if logs:
-            from contextlib import nullcontext
-            return nullcontext()
-        # Animated spinner is safe to use with prompt_toolkit input handling
-        return console.status("[dim]nanobot is thinking...[/dim]", spinner="dots")
 
     if message:
-        # Single message mode
-        async def run_once():
-            with _thinking_ctx():
-                response = await agent_loop.process_direct(message, session_id)
-            _print_agent_response(response, render_markdown=markdown)
-            await agent_loop.close_mcp()
-        
-        asyncio.run(run_once())
+        asyncio.run(_run_single_message(agent_loop, message, session_id, markdown, logs))
     else:
-        # Interactive mode
-        _init_prompt_session()
-        console.print(f"{__logo__} Interactive mode (type [bold]exit[/bold] or [bold]Ctrl+C[/bold] to quit)\n")
-
-        def _exit_on_sigint(signum, frame):
-            _restore_terminal()
-            console.print("\nGoodbye!")
-            os._exit(0)
-
-        signal.signal(signal.SIGINT, _exit_on_sigint)
-        
-        async def run_interactive():
-            try:
-                while True:
-                    try:
-                        _flush_pending_tty_input()
-                        user_input = await _read_interactive_input_async()
-                        command = user_input.strip()
-                        if not command:
-                            continue
-
-                        if _is_exit_command(command):
-                            _restore_terminal()
-                            console.print("\nGoodbye!")
-                            break
-                        
-                        with _thinking_ctx():
-                            response = await agent_loop.process_direct(user_input, session_id)
-                        _print_agent_response(response, render_markdown=markdown)
-                    except KeyboardInterrupt:
-                        _restore_terminal()
-                        console.print("\nGoodbye!")
-                        break
-                    except EOFError:
-                        _restore_terminal()
-                        console.print("\nGoodbye!")
-                        break
-            finally:
-                await agent_loop.close_mcp()
-        
-        asyncio.run(run_interactive())
+        _run_interactive_mode(agent_loop, session_id, markdown, logs)
 
 
 # ============================================================================
