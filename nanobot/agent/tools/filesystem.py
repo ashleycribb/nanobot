@@ -139,6 +139,10 @@ class EditFileTool(Tool):
             "required": ["path", "old_text", "new_text"]
         }
     
+    def _edit_file_sync(self, file_path: Path, old_text: str, new_text: str) -> str:
+        """Synchronous file editing logic to be run in a thread."""
+        if not file_path.exists():
+            return f"Error: File not found: {file_path}"
     def _edit_sync(self, file_path: Path, old_text: str, new_text: str, path_str: str) -> str:
         if not file_path.exists():
             return f"Error: File not found: {path_str}"
@@ -156,11 +160,13 @@ class EditFileTool(Tool):
         new_content = content.replace(old_text, new_text, 1)
         file_path.write_text(new_content, encoding="utf-8")
 
+        return f"Successfully edited {file_path}"
         return f"Successfully edited {path_str}"
 
     async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
         try:
             file_path = _resolve_path(path, self._allowed_dir)
+            return await asyncio.to_thread(self._edit_file_sync, file_path, old_text, new_text)
             return await asyncio.to_thread(self._edit_sync, file_path, old_text, new_text, path)
         except PermissionError as e:
             return f"Error: {e}"
