@@ -110,15 +110,6 @@ class WriteFileTool(Tool):
     async def execute(self, path: str, content: str, **kwargs: Any) -> str:
         try:
             return await asyncio.to_thread(self._write_sync, path, content, self._allowed_dir)
-    def _write_sync(self, file_path: Path, content: str, path_str: str) -> str:
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(content, encoding="utf-8")
-        return f"Successfully wrote {len(content)} bytes to {path_str}"
-
-    async def execute(self, path: str, content: str, **kwargs: Any) -> str:
-        try:
-            file_path = _resolve_path(path, self._allowed_dir)
-            return await asyncio.to_thread(self._write_sync, file_path, content, path)
         except PermissionError as e:
             return f"Error: {e}"
         except Exception as e:
@@ -191,14 +182,6 @@ class EditFileTool(Tool):
     async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
         try:
             return await asyncio.to_thread(self._edit_sync, path, old_text, new_text, self._allowed_dir)
-        return f"Successfully edited {file_path}"
-        return f"Successfully edited {path_str}"
-
-    async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
-        try:
-            file_path = _resolve_path(path, self._allowed_dir)
-            return await asyncio.to_thread(self._edit_file_sync, file_path, old_text, new_text)
-            return await asyncio.to_thread(self._edit_sync, file_path, old_text, new_text, path)
         except PermissionError as e:
             return f"Error: {e}"
         except Exception as e:
