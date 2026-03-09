@@ -1,5 +1,6 @@
 """Session management for conversation history."""
 
+import asyncio
 import json
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -147,23 +148,51 @@ class SessionManager:
             logger.warning(f"Failed to load session {key}: {e}")
             return None
     
-    def save(self, session: Session) -> None:
+    async def save(self, session: Session) -> None:
         """Save a session to disk."""
+        await asyncio.to_thread(self._save_to_disk, session)
+        self._cache[session.key] = session
+
+    def _save_to_disk(self, session: Session) -> None:
+        """Write session data to disk (blocking)."""
         path = self._get_session_path(session.key)
 
+    def _write_to_disk(self, path: Path, metadata: dict[str, Any], messages: list[dict[str, Any]]) -> None:
+        """Write session data to disk (blocking)."""
         with open(path, "w") as f:
-            metadata_line = {
-                "_type": "metadata",
-                "created_at": session.created_at.isoformat(),
-                "updated_at": session.updated_at.isoformat(),
-                "metadata": session.metadata,
-                "last_consolidated": session.last_consolidated
-            }
-            f.write(json.dumps(metadata_line) + "\n")
-            for msg in session.messages:
+            f.write(json.dumps(metadata) + "\n")
+            for msg in messages:
                 f.write(json.dumps(msg) + "\n")
 
+    async def save(self, session: Session) -> None:
+        """Save a session to disk asynchronously."""
+        # Snapshot state in main thread to avoid concurrency issues during thread execution
+        messages = list(session.messages)
+        metadata = session.metadata.copy()
+        created_at = session.created_at
+        updated_at = session.updated_at
+        last_consolidated = session.last_consolidated
+        path = self._get_session_path(session.key)
+
+        def _write():
+            with open(path, "w") as f:
+                metadata_line = {
+                    "_type": "metadata",
+                    "created_at": created_at.isoformat(),
+                    "updated_at": updated_at.isoformat(),
+                    "metadata": metadata,
+                    "last_consolidated": last_consolidated
+                }
+                f.write(json.dumps(metadata_line) + "\n")
+                for msg in messages:
+                    f.write(json.dumps(msg) + "\n")
+
+        await asyncio.to_thread(_write)
         self._cache[session.key] = session
+
+    async def asave(self, session: Session) -> None:
+        """Alias for save() for backward compatibility."""
+        await self.save(session)
     
     def invalidate(self, key: str) -> None:
         """Remove a session from the in-memory cache."""
