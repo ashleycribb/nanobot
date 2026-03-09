@@ -1,3 +1,4 @@
+"""Markdown utility functions."""
 """Markdown utilities for channel message formatting."""
 
 from __future__ import annotations
