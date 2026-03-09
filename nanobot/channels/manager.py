@@ -196,6 +196,9 @@ class ChannelManager:
                 logger.info(f"Stopped {name} channel")
             except Exception as e:
                 logger.error(f"Error stopping {name}: {e}")
+    
+    async def _send_message_safe(self, channel: BaseChannel, msg: OutboundMessage) -> None:
+        """Send a message and log any errors."""
 
 
     async def _process_message(
@@ -231,6 +234,7 @@ class ChannelManager:
                 
                 channel = self.channels.get(msg.channel)
                 if channel:
+                    asyncio.create_task(self._send_message_safe(channel, msg))
                     # Create a unique key for channel+chat
                     key = f"{msg.channel}:{msg.chat_id}"
                     previous_task = self._active_tasks.get(key)
