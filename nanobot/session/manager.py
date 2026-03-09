@@ -148,6 +148,15 @@ class SessionManager:
             logger.warning(f"Failed to load session {key}: {e}")
             return None
     
+    async def save(self, session: Session) -> None:
+        """Save a session to disk."""
+        await asyncio.to_thread(self._save_to_disk, session)
+        self._cache[session.key] = session
+
+    def _save_to_disk(self, session: Session) -> None:
+        """Write session data to disk (blocking)."""
+        path = self._get_session_path(session.key)
+
     def _write_to_disk(self, path: Path, metadata: dict[str, Any], messages: list[dict[str, Any]]) -> None:
         """Write session data to disk (blocking)."""
         with open(path, "w") as f:
