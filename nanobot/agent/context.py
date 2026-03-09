@@ -43,11 +43,12 @@ class ContextBuilder:
         parts.append(self._get_identity())
         
         # Bootstrap files
-        bootstrap = self._load_bootstrap_files()
+        bootstrap = await self._load_bootstrap_files()
         if bootstrap:
             parts.append(bootstrap)
         
         # Memory context
+        memory = await asyncio.to_thread(self.memory.get_memory_context)
         memory = await self.memory.get_memory_context()
         memory = await self.memory.aget_memory_context()
         if memory:
@@ -55,14 +56,14 @@ class ContextBuilder:
         
         # Skills - progressive loading
         # 1. Always-loaded skills: include full content
-        always_skills = self.skills.get_always_skills()
+        always_skills = await asyncio.to_thread(self.skills.get_always_skills)
         if always_skills:
-            always_content = self.skills.load_skills_for_context(always_skills)
+            always_content = await asyncio.to_thread(self.skills.load_skills_for_context, always_skills)
             if always_content:
                 parts.append(f"# Active Skills\n\n{always_content}")
         
         # 2. Available skills: only show summary (agent uses read_file to load)
-        skills_summary = self.skills.build_skills_summary()
+        skills_summary = await asyncio.to_thread(self.skills.build_skills_summary)
         if skills_summary:
             parts.append(f"""# Skills
 
@@ -112,6 +113,12 @@ Always be helpful, accurate, and concise. When using tools, think step by step: 
 When remembering something important, write to {workspace_path}/memory/MEMORY.md
 To recall past events, grep {workspace_path}/memory/HISTORY.md"""
     
+    async def _load_bootstrap_files(self) -> str:
+        """Load all bootstrap files from workspace (async)."""
+        return await asyncio.to_thread(self._load_bootstrap_files_sync)
+
+    def _load_bootstrap_files_sync(self) -> str:
+        """Synchronous implementation of bootstrap file loading."""
     def _load_bootstrap_files(self) -> str:
         """Load all bootstrap files from workspace (with mtime caching)."""
         parts = []
@@ -192,6 +199,11 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
             mime, _ = mimetypes.guess_type(path_str)
 
             if not p.is_file() or not mime or not mime.startswith("image/"):
+                continue
+
+            content = await asyncio.to_thread(p.read_bytes)
+            b64 = base64.b64encode(content).decode()
+            images.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
                 return None
 
             content = p.read_bytes()
