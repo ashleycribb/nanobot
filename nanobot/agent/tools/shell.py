@@ -81,9 +81,6 @@ class ExecTool(Tool):
             arguments = args[1:]
 
             process = await asyncio.create_subprocess_exec(
-                program,
-                *arguments,
-            process = await asyncio.create_subprocess_exec(
                 args[0],
                 *args[1:],
                 stdout=asyncio.subprocess.PIPE,
