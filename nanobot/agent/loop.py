@@ -396,6 +396,7 @@ class AgentLoop:
             tools = f" [tools: {', '.join(m['tools_used'])}]" if m.get("tools_used") else ""
             lines.append(f"[{m.get('timestamp', '?')[:16]}] {m['role'].upper()}{tools}: {m['content']}")
         conversation = "\n".join(lines)
+        current_memory = await memory.read_long_term()
         current_memory = await memory.aread_long_term()
 
         prompt = f"""You are a memory consolidation agent. Process this conversation and return a JSON object with exactly two keys:
@@ -432,10 +433,10 @@ Respond with ONLY valid JSON, no markdown fences."""
                 return
 
             if entry := result.get("history_entry"):
-                memory.append_history(entry)
+                await memory.append_history(entry)
             if update := result.get("memory_update"):
                 if update != current_memory:
-                    memory.write_long_term(update)
+                    await memory.write_long_term(update)
 
             if archive_all:
                 session.last_consolidated = 0

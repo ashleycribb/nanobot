@@ -14,11 +14,13 @@ class MemoryStore:
         self.memory_file = self.memory_dir / "MEMORY.md"
         self.history_file = self.memory_dir / "HISTORY.md"
 
-    def read_long_term(self) -> str:
-        if self.memory_file.exists():
-            return self.memory_file.read_text(encoding="utf-8")
+    async def read_long_term(self) -> str:
+        if await asyncio.to_thread(self.memory_file.exists):
+            return await asyncio.to_thread(self.memory_file.read_text, encoding="utf-8")
         return ""
 
+    async def write_long_term(self, content: str) -> None:
+        await asyncio.to_thread(self.memory_file.write_text, content, encoding="utf-8")
     async def aread_long_term(self) -> str:
         """Asynchronously read long-term memory."""
         if self.memory_file.exists():
@@ -28,12 +30,15 @@ class MemoryStore:
     def write_long_term(self, content: str) -> None:
         self.memory_file.write_text(content, encoding="utf-8")
 
-    def append_history(self, entry: str) -> None:
-        with open(self.history_file, "a", encoding="utf-8") as f:
-            f.write(entry.rstrip() + "\n\n")
+    async def append_history(self, entry: str) -> None:
+        def _append():
+            with open(self.history_file, "a", encoding="utf-8") as f:
+                f.write(entry.rstrip() + "\n\n")
 
-    def get_memory_context(self) -> str:
-        long_term = self.read_long_term()
+        await asyncio.to_thread(_append)
+
+    async def get_memory_context(self) -> str:
+        long_term = await self.read_long_term()
         return f"## Long-term Memory\n{long_term}" if long_term else ""
 
     async def aget_memory_context(self) -> str:

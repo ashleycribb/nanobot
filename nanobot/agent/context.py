@@ -48,6 +48,7 @@ class ContextBuilder:
             parts.append(bootstrap)
         
         # Memory context
+        memory = await self.memory.get_memory_context()
         memory = await self.memory.aget_memory_context()
         if memory:
             parts.append(f"# Memory\n\n{memory}")
