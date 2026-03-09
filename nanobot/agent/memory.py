@@ -20,6 +20,17 @@ class MemoryStore:
                 return self.memory_file.read_text(encoding="utf-8")
             return ""
         return await asyncio.to_thread(_read)
+        if await asyncio.to_thread(self.memory_file.exists):
+            return await asyncio.to_thread(self.memory_file.read_text, encoding="utf-8")
+        return ""
+
+    async def write_long_term(self, content: str) -> None:
+        await asyncio.to_thread(self.memory_file.write_text, content, encoding="utf-8")
+    async def aread_long_term(self) -> str:
+        """Asynchronously read long-term memory."""
+        if self.memory_file.exists():
+            return await asyncio.to_thread(self.memory_file.read_text, encoding="utf-8")
+        return ""
 
     async def write_long_term(self, content: str) -> None:
         await asyncio.to_thread(self.memory_file.write_text, content, encoding="utf-8")
@@ -32,4 +43,13 @@ class MemoryStore:
 
     async def get_memory_context(self) -> str:
         long_term = await self.read_long_term()
+
+        await asyncio.to_thread(_append)
+
+    async def get_memory_context(self) -> str:
+        long_term = await self.read_long_term()
+        return f"## Long-term Memory\n{long_term}" if long_term else ""
+
+    async def aget_memory_context(self) -> str:
+        long_term = await self.aread_long_term()
         return f"## Long-term Memory\n{long_term}" if long_term else ""
