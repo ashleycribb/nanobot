@@ -190,11 +190,30 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
 
         return messages
 
+    def _read_and_encode(self, path: Path) -> tuple[str, str] | None:
+        """Read and encode an image file in a worker thread."""
+        mime, _ = mimetypes.guess_type(str(path))
+        if not path.is_file() or not mime or not mime.startswith("image/"):
+            return None
+        return mime, base64.b64encode(path.read_bytes()).decode()
+
     async def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
         """Build user message content with optional base64-encoded images."""
         if not media:
             return text
         
+        # Process all media files in parallel
+        tasks = [
+            asyncio.to_thread(self._read_and_encode, Path(path))
+            for path in media
+        ]
+        results = await asyncio.gather(*tasks)
+
+        images = []
+        for result in results:
+            if result:
+                mime, b64 = result
+                images.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
         def _sync_process_image(path_str: str) -> dict[str, str] | None:
             p = Path(path_str)
             mime, _ = mimetypes.guess_type(path_str)
