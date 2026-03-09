@@ -44,6 +44,12 @@ class ReadFileTool(Tool):
 
     async def execute(self, path: str, **kwargs: Any) -> str:
         try:
+            return await asyncio.to_thread(self._read_file, path)
+        except Exception as e:
+            return f"Error reading file: {str(e)}"
+
+    def _read_file(self, path: str) -> str:
+        try:
             file_path = _resolve_path(path, self._allowed_dir)
             if not file_path.exists():
                 return f"Error: File not found: {path}"
@@ -69,8 +75,6 @@ class ReadFileTool(Tool):
             return await asyncio.to.thread(self._read_sync, path, self._allowed_dir)
         except PermissionError as e:
             return f"Error: {e}"
-        except Exception as e:
-            return f"Error reading file: {str(e)}"
 
 
 class WriteFileTool(Tool):
@@ -111,6 +115,12 @@ class WriteFileTool(Tool):
 
     async def execute(self, path: str, content: str, **kwargs: Any) -> str:
         try:
+            return await asyncio.to_thread(self._write_file, path, content)
+        except Exception as e:
+            return f"Error writing file: {str(e)}"
+
+    def _write_file(self, path: str, content: str) -> str:
+        try:
             file_path = _resolve_path(path, self._allowed_dir)
 
             def write_operation():
@@ -134,8 +144,6 @@ class WriteFileTool(Tool):
             return await asyncio.to_thread(self._write_sync, path, content, self._allowed_dir)
         except PermissionError as e:
             return f"Error: {e}"
-        except Exception as e:
-            return f"Error writing file: {str(e)}"
 
 
 class EditFileTool(Tool):
@@ -202,6 +210,12 @@ class EditFileTool(Tool):
 
     async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
         try:
+            return await asyncio.to_thread(self._edit_file, path, old_text, new_text)
+        except Exception as e:
+            return f"Error editing file: {str(e)}"
+
+    def _edit_file(self, path: str, old_text: str, new_text: str) -> str:
+        try:
             file_path = _resolve_path(path, self._allowed_dir)
             if not file_path.exists():
                 return f"Error: File not found: {path}"
@@ -230,8 +244,6 @@ class EditFileTool(Tool):
             return await asyncio.to_thread(self._edit_sync, path, old_text, new_text, self._allowed_dir)
         except PermissionError as e:
             return f"Error: {e}"
-        except Exception as e:
-            return f"Error editing file: {str(e)}"
 
 
 class ListDirTool(Tool):
@@ -284,6 +296,12 @@ class ListDirTool(Tool):
 
     async def execute(self, path: str, **kwargs: Any) -> str:
         try:
+            return await asyncio.to_thread(self._list_dir, path)
+        except Exception as e:
+            return f"Error listing directory: {str(e)}"
+
+    def _list_dir(self, path: str) -> str:
+        try:
             dir_path = _resolve_path(path, self._allowed_dir)
             if not dir_path.exists():
                 return f"Error: Directory not found: {path}"
@@ -309,5 +327,3 @@ class ListDirTool(Tool):
             return await asyncio.to_thread(self._list_sync, path, self._allowed_dir)
         except PermissionError as e:
             return f"Error: {e}"
-        except Exception as e:
-            return f"Error listing directory: {str(e)}"
