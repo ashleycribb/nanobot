@@ -1,5 +1,6 @@
 """Context builder for assembling agent prompts."""
 
+import asyncio
 import base64
 import mimetypes
 import platform
@@ -24,8 +25,9 @@ class ContextBuilder:
         self.workspace = workspace
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
+        self._bootstrap_cache = {}  # {filename: (mtime, content)}
     
-    def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
+    async def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
         """
         Build the system prompt from bootstrap files, memory, and skills.
         
@@ -46,7 +48,7 @@ class ContextBuilder:
             parts.append(bootstrap)
         
         # Memory context
-        memory = self.memory.get_memory_context()
+        memory = await self.memory.aget_memory_context()
         if memory:
             parts.append(f"# Memory\n\n{memory}")
         
@@ -110,18 +112,36 @@ When remembering something important, write to {workspace_path}/memory/MEMORY.md
 To recall past events, grep {workspace_path}/memory/HISTORY.md"""
     
     def _load_bootstrap_files(self) -> str:
-        """Load all bootstrap files from workspace."""
+        """Load all bootstrap files from workspace (with mtime caching)."""
         parts = []
         
         for filename in self.BOOTSTRAP_FILES:
             file_path = self.workspace / filename
-            if file_path.exists():
-                content = file_path.read_text(encoding="utf-8")
+            try:
+                stat = file_path.stat()
+                mtime = stat.st_mtime
+
+                # Check cache
+                cached_mtime, cached_content = self._bootstrap_cache.get(filename, (0, None))
+
+                if mtime != cached_mtime or cached_content is None:
+                    # File changed or not cached
+                    content = file_path.read_text(encoding="utf-8")
+                    self._bootstrap_cache[filename] = (mtime, content)
+                else:
+                    # Use cached
+                    content = cached_content
+
                 parts.append(f"## {filename}\n\n{content}")
+            except FileNotFoundError:
+                # File doesn't exist (or was deleted), clear from cache if present
+                if filename in self._bootstrap_cache:
+                    del self._bootstrap_cache[filename]
+                continue
         
         return "\n\n".join(parts) if parts else ""
     
-    def build_messages(
+    async def build_messages(
         self,
         history: list[dict[str, Any]],
         current_message: str,
@@ -147,7 +167,7 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
         messages = []
 
         # System prompt
-        system_prompt = self.build_system_prompt(skill_names)
+        system_prompt = await self.build_system_prompt(skill_names)
         if channel and chat_id:
             system_prompt += f"\n\n## Current Session\nChannel: {channel}\nChat ID: {chat_id}"
         messages.append({"role": "system", "content": system_prompt})
@@ -156,24 +176,39 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
         messages.extend(history)
 
         # Current message (with optional image attachments)
-        user_content = self._build_user_content(current_message, media)
+        user_content = await self._build_user_content(current_message, media)
         messages.append({"role": "user", "content": user_content})
 
         return messages
 
-    def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
+    async def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
         """Build user message content with optional base64-encoded images."""
         if not media:
             return text
         
-        images = []
-        for path in media:
-            p = Path(path)
-            mime, _ = mimetypes.guess_type(path)
+        def _sync_process_image(path_str: str) -> dict[str, str] | None:
+            p = Path(path_str)
+            mime, _ = mimetypes.guess_type(path_str)
+
             if not p.is_file() or not mime or not mime.startswith("image/"):
-                continue
-            b64 = base64.b64encode(p.read_bytes()).decode()
-            images.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
+                return None
+
+            content = p.read_bytes()
+            b64 = base64.b64encode(content)
+            return {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64.decode()}"}
+            }
+
+        async def _read_and_encode_image(path_str: str) -> dict[str, str] | None:
+            # Run the entire file I/O + CPU intensive encoding in a separate thread
+            return await asyncio.to_thread(_sync_process_image, path_str)
+
+        # Process all media in parallel
+        tasks = [_read_and_encode_image(path) for path in media]
+        results = await asyncio.gather(*tasks)
+
+        images = [r for r in results if r is not None]
         
         if not images:
             return text
