@@ -48,6 +48,7 @@ class ContextBuilder:
             parts.append(bootstrap)
         
         # Memory context
+        memory = await self.memory.get_memory_context()
         memory = await asyncio.to_thread(self.memory.get_memory_context)
         memory = await self.memory.get_memory_context()
         memory = await self.memory.aget_memory_context()
