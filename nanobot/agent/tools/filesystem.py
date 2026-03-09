@@ -55,6 +55,8 @@ class ReadFileTool(Tool):
                 return f"Error: File not found: {path}"
             if not file_path.is_file():
                 return f"Error: Not a file: {path}"
+
+            content = file_path.read_text(encoding="utf-8")
             
 
             content = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
@@ -122,6 +124,8 @@ class WriteFileTool(Tool):
     def _write_file(self, path: str, content: str) -> str:
         try:
             file_path = _resolve_path(path, self._allowed_dir)
+            await asyncio.to_thread(file_path.parent.mkdir, parents=True, exist_ok=True)
+            await asyncio.to_thread(file_path.write_text, content, encoding="utf-8")
 
             def write_operation():
                 file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -219,18 +223,23 @@ class EditFileTool(Tool):
             file_path = _resolve_path(path, self._allowed_dir)
             if not file_path.exists():
                 return f"Error: File not found: {path}"
+
+            content = file_path.read_text(encoding="utf-8")
+
             
             content = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
             
             if old_text not in content:
-                return f"Error: old_text not found in file. Make sure it matches exactly."
-            
+                return "Error: old_text not found in file. Make sure it matches exactly."
+
             # Count occurrences
             count = content.count(old_text)
             if count > 1:
                 return f"Warning: old_text appears {count} times. Please provide more context to make it unique."
-            
+
             new_content = content.replace(old_text, new_text, 1)
+            file_path.write_text(new_content, encoding="utf-8")
+
             await asyncio.to_thread(file_path.write_text, new_content, encoding="utf-8")
             
             return f"Successfully edited {path}"
@@ -307,6 +316,12 @@ class ListDirTool(Tool):
                 return f"Error: Directory not found: {path}"
             if not dir_path.is_dir():
                 return f"Error: Not a directory: {path}"
+
+            items = []
+            for item in sorted(dir_path.iterdir()):
+                prefix = "📁 " if item.is_dir() else "📄 "
+                items.append(f"{prefix}{item.name}")
+
             
             def list_contents():
                 items = []
@@ -319,7 +334,7 @@ class ListDirTool(Tool):
             
             if not items:
                 return f"Directory {path} is empty"
-            
+
             return "\n".join(items)
 
             result = await asyncio.to_thread(self._list_sync, dir_path)
