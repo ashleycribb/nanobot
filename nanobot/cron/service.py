@@ -320,6 +320,14 @@ class CronService:
         for job in store.jobs:
             if job.id == job_id:
                 mutator(job)
+    
+    def _update_job(self, job_id: str, modifier: Callable[[CronJob], None]) -> CronJob | None:
+        """Helper to update a job safely."""
+        store = self._load_store()
+        for job in store.jobs:
+            if job.id == job_id:
+                modifier(job)
+                job.updated_at_ms = _now_ms()
                 self._save_store()
                 self._arm_timer()
                 return job
@@ -330,6 +338,8 @@ class CronService:
         def update(job: CronJob):
             job.enabled = enabled
             job.updated_at_ms = _now_ms()
+        def modifier(job: CronJob):
+            job.enabled = enabled
             if enabled:
                 job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
             else:
@@ -337,6 +347,8 @@ class CronService:
 
         return self._update_job(job_id, update)
 
+        return self._update_job(job_id, modifier)
+    
     async def run_job(self, job_id: str, force: bool = False) -> bool:
         """Manually run a job."""
         store = self._load_store()
