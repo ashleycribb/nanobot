@@ -67,38 +67,7 @@ class CronService:
 
         if self.store_path.exists():
             try:
-                data = json.loads(self.store_path.read_text())
-                jobs = []
-                for j in data.get("jobs", []):
-                    jobs.append(CronJob(
-                        id=j["id"],
-                        name=j["name"],
-                        enabled=j.get("enabled", True),
-                        schedule=CronSchedule(
-                            kind=j["schedule"]["kind"],
-                            at_ms=j["schedule"].get("atMs"),
-                            every_ms=j["schedule"].get("everyMs"),
-                            expr=j["schedule"].get("expr"),
-                            tz=j["schedule"].get("tz"),
-                        ),
-                        payload=CronPayload(
-                            kind=j["payload"].get("kind", "agent_turn"),
-                            message=j["payload"].get("message", ""),
-                            deliver=j["payload"].get("deliver", False),
-                            channel=j["payload"].get("channel"),
-                            to=j["payload"].get("to"),
-                        ),
-                        state=CronJobState(
-                            next_run_at_ms=j.get("state", {}).get("nextRunAtMs"),
-                            last_run_at_ms=j.get("state", {}).get("lastRunAtMs"),
-                            last_status=j.get("state", {}).get("lastStatus"),
-                            last_error=j.get("state", {}).get("lastError"),
-                        ),
-                        created_at_ms=j.get("createdAtMs", 0),
-                        updated_at_ms=j.get("updatedAtMs", 0),
-                        delete_after_run=j.get("deleteAfterRun", False),
-                    ))
-                self._store = CronStore(jobs=jobs)
+                self._store = CronStore.model_validate_json(self.store_path.read_text())
             except Exception as e:
                 logger.warning(f"Failed to load cron store: {e}")
                 self._store = CronStore()
@@ -113,6 +82,10 @@ class CronService:
             return
 
         self.store_path.parent.mkdir(parents=True, exist_ok=True)
+        self.store_path.write_text(
+            self._store.model_dump_json(by_alias=True, indent=2)
+        )
+    
 
         data = {
             "version": self._store.version,
