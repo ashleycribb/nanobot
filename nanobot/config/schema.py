@@ -1,7 +1,8 @@
 """Configuration schema using Pydantic."""
 
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
+
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 from pydantic_settings import BaseSettings
 
@@ -18,7 +19,9 @@ class WhatsAppConfig(Base):
     enabled: bool = False
     bridge_url: str = "ws://localhost:3001"
     bridge_token: str = ""  # Shared token for bridge auth (optional, recommended)
-    allow_from: list[str] = Field(default_factory=list)  # Allowed phone numbers
+    allow_from: list[str] = Field(
+        default_factory=lambda: ["__explicit_allow_list_required__"]
+    )  # Allowed phone numbers
 
 
 class TelegramConfig(Base):
@@ -134,8 +137,8 @@ class MochatConfig(Base):
 class SlackDMConfig(Base):
     """Slack DM policy configuration."""
 
-    enabled: bool = True
-    policy: str = "open"  # "open" or "allowlist"
+    enabled: bool = False
+    policy: str = "allowlist"  # "open" or "allowlist"
     allow_from: list[str] = Field(default_factory=list)  # Allowed Slack user IDs
 
 
