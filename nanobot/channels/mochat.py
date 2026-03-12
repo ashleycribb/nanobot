@@ -457,8 +457,8 @@ class MochatChannel(BaseChannel):
                 items = [i for i in sessions if isinstance(i, dict)]
             elif "sessionId" in data:
                 items = [data]
-        for p in items:
-            await self._handle_watch_payload(p, "session")
+        if items:
+            await asyncio.gather(*(self._handle_watch_payload(p, "session") for p in items))
         return True
 
     async def _subscribe_panels(self, panel_ids: list[str]) -> bool:
