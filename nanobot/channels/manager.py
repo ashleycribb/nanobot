@@ -288,6 +288,9 @@ class ChannelManager:
                 )
                 
                 if msg.channel not in self.channels:
+                    logger.error(f"Received message for unknown channel: {msg.channel}")
+                    continue
+
                 channel = self.channels.get(msg.channel)
                 if channel:
                     asyncio.create_task(self._send_message_safe(channel, msg))
