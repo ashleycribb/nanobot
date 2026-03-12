@@ -287,7 +287,6 @@ class ChannelManager:
                     timeout=1.0
                 )
                 
-                if msg.channel not in self.channels:
                 channel = self.channels.get(msg.channel)
                 if channel:
                     asyncio.create_task(self._send_message_safe(channel, msg))

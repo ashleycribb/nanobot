@@ -72,23 +72,11 @@ class ExecTool(Tool):
                 args = shlex.split(command)
             except ValueError as e:
                 return f"Error parsing command arguments: {str(e)}"
-            # Parse command string into list of arguments to avoid shell injection
-            try:
-                args = shlex.split(command)
-            except ValueError as e:
-                return f"Error parsing command: {str(e)}"
 
             if not args:
                 return "Error: Empty command"
 
             process = await asyncio.create_subprocess_exec(
-                *args,
-            program = args[0]
-            arguments = args[1:]
-
-            process = await asyncio.create_subprocess_exec(
-                program,
-                *arguments,
                 args[0],
                 *args[1:],
                 stdout=asyncio.subprocess.PIPE,

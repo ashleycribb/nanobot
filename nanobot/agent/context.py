@@ -119,8 +119,6 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
         return await asyncio.to_thread(self._load_bootstrap_files_sync)
 
     def _load_bootstrap_files_sync(self) -> str:
-        """Synchronous implementation of bootstrap file loading."""
-    def _load_bootstrap_files(self) -> str:
         """Load all bootstrap files from workspace (with mtime caching)."""
         parts = []
         
@@ -214,37 +212,10 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
             if result:
                 mime, b64 = result
                 images.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
-        def _sync_process_image(path_str: str) -> dict[str, str] | None:
-            p = Path(path_str)
-            mime, _ = mimetypes.guess_type(path_str)
 
-            if not p.is_file() or not mime or not mime.startswith("image/"):
-                continue
-
-            content = await asyncio.to_thread(p.read_bytes)
-            b64 = base64.b64encode(content).decode()
-            images.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
-                return None
-
-            content = p.read_bytes()
-            b64 = base64.b64encode(content)
-            return {
-                "type": "image_url",
-                "image_url": {"url": f"data:{mime};base64,{b64.decode()}"}
-            }
-
-        async def _read_and_encode_image(path_str: str) -> dict[str, str] | None:
-            # Run the entire file I/O + CPU intensive encoding in a separate thread
-            return await asyncio.to_thread(_sync_process_image, path_str)
-
-        # Process all media in parallel
-        tasks = [_read_and_encode_image(path) for path in media]
-        results = await asyncio.gather(*tasks)
-
-        images = [r for r in results if r is not None]
-        
         if not images:
             return text
+
         return images + [{"type": "text", "text": text}]
     
     def add_tool_result(
