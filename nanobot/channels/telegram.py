@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import re
 from loguru import logger
 from telegram import BotCommand, Update
@@ -234,8 +235,18 @@ class TelegramChannel(BaseChannel):
                     "audio": self._app.bot.send_audio,
                 }.get(media_type, self._app.bot.send_document)
                 param = "photo" if media_type == "photo" else media_type if media_type in ("voice", "audio") else "document"
-                with open(media_path, 'rb') as f:
-                    await sender(chat_id=chat_id, **{param: f})
+
+                def read_media():
+                    with open(media_path, 'rb') as f:
+                        return f.read()
+
+                # Use to_thread to read the file into memory without blocking the event loop
+                file_content = await asyncio.to_thread(read_media)
+
+                f_io = io.BytesIO(file_content)
+                f_io.name = media_path  # Important for telegram bot to recognize file extension
+
+                await sender(chat_id=chat_id, **{param: f_io})
             except Exception as e:
                 filename = media_path.rsplit("/", 1)[-1]
                 logger.error(f"Failed to send media {media_path}: {e}")
