@@ -153,20 +153,10 @@ def test_truncate_string_suffix_only():
 def test_truncate_string_very_short_max_len():
     """
     Test behavior when max_len is very short.
-    Note: Current implementation may produce string longer than max_len
-    if max_len < len(suffix). We test the current behavior.
     """
     text = "Hello"
-    # max_len=2, suffix="..." (len 3). 2-3=-1. text[:-1] -> "Hell". Result: "Hell..."
-    # This is a known issue/behavior of the current implementation.
-    # The requirement is to 'Add unit tests', so we document current behavior.
-    # However, ideally, it should probably return just the suffix truncated or something else.
-    # But let's stick to validating existing behavior unless we want to fix it.
-    # Given the instructions "Pure function... simple logic", I assume it's meant to be simple.
-
-    # Let's verify what happens:
-    # truncate_string("Hello", max_len=2, suffix="...") -> "Hell..." (len 7)
-    assert truncate_string(text, max_len=2, suffix="...") == "Hell..."
+    # max_len=2, suffix="..." (len 3). max_len < len(suffix), so return text[:2] -> "He"
+    assert truncate_string(text, max_len=2, suffix="...") == "He"
 
 
 def test_truncate_string_default_args():
@@ -211,15 +201,13 @@ def test_truncate_string_custom_suffix():
 def test_truncate_string_max_len_smaller_than_suffix():
     """
     Test edge case where max_len is smaller than the length of the suffix.
-    The function does not strictly enforce max_len in this case and returns
-    a string longer than max_len due to negative slicing.
     """
     s = "hello world"
     # max_len (2) < len("...") (3)
-    # 2 - 3 = -1, so s[:-1] + "..." -> "hello worl..."
+    # should return s[:2] -> "he"
     result = truncate_string(s, max_len=2, suffix="...")
-    assert result == "hello worl..."
-    assert len(result) > 2
+    assert result == "he"
+    assert len(result) == 2
 
 def test_truncate_string_default_args():
     """Test truncate_string with default arguments."""
