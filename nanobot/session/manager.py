@@ -173,45 +173,6 @@ class SessionManager:
             return None
     
     async def save(self, session: Session) -> None:
-        """Save a session to disk."""
-        await asyncio.to_thread(self._save_to_disk, session)
-        self._cache[session.key] = session
-
-    def _save_to_disk(self, session: Session) -> None:
-        """Write session data to disk (blocking)."""
-        path = self._get_session_path(session.key)
-        self._write_to_disk(path, session.messages, session)
-        self._cache[session.key] = session
-
-    async def asave(self, session: Session) -> None:
-        """Save a session to disk (async)."""
-        path = self._get_session_path(session.key)
-        # Snapshot messages to ensure thread safety
-        messages = list(session.messages)
-        await asyncio.to_thread(self._write_to_disk, path, messages, session)
-        self._cache[session.key] = session
-
-    def _write_to_disk(self, path: Path, messages: list[dict], session: Session) -> None:
-        """Write session data to disk."""
-        with open(path, "w") as f:
-            metadata_line = {
-                "_type": "metadata",
-                "created_at": session.created_at.isoformat(),
-                "updated_at": session.updated_at.isoformat(),
-                "metadata": session.metadata,
-                "last_consolidated": session.last_consolidated
-            }
-            f.write(json.dumps(metadata_line) + "\n")
-            for msg in messages:
-                f.write(json.dumps(msg) + "\n")
-    def _write_to_disk(self, path: Path, metadata: dict[str, Any], messages: list[dict[str, Any]]) -> None:
-        """Write session data to disk (blocking)."""
-        with open(path, "w") as f:
-            f.write(json.dumps(metadata) + "\n")
-            for msg in messages:
-                f.write(json.dumps(msg) + "\n")
-
-    async def save(self, session: Session) -> None:
         """Save a session to disk asynchronously."""
         # Snapshot state in main thread to avoid concurrency issues during thread execution
         messages = list(session.messages)
@@ -222,17 +183,17 @@ class SessionManager:
         path = self._get_session_path(session.key)
 
         def _write():
+            metadata_line = {
+                "_type": "metadata",
+                "created_at": created_at.isoformat(),
+                "updated_at": updated_at.isoformat(),
+                "metadata": metadata,
+                "last_consolidated": last_consolidated
+            }
+            lines = [json.dumps(metadata_line)]
+            lines.extend(json.dumps(msg) for msg in messages)
             with open(path, "w") as f:
-                metadata_line = {
-                    "_type": "metadata",
-                    "created_at": created_at.isoformat(),
-                    "updated_at": updated_at.isoformat(),
-                    "metadata": metadata,
-                    "last_consolidated": last_consolidated
-                }
-                f.write(json.dumps(metadata_line) + "\n")
-                for msg in messages:
-                    f.write(json.dumps(msg) + "\n")
+                f.write("\n".join(lines) + "\n")
 
         await asyncio.to_thread(_write)
         self._cache[session.key] = session
