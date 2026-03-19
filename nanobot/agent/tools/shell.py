@@ -63,15 +63,8 @@ class ExecTool(Tool):
     
     async def execute(self, command: str, working_dir: str | None = None, **kwargs: Any) -> str:
         cwd = working_dir or self.working_dir or os.getcwd()
-        guard_error = self._guard_command(command, cwd)
-        if guard_error:
-            return guard_error
         
         try:
-            try:
-                args = shlex.split(command)
-            except ValueError as e:
-                return f"Error parsing command arguments: {str(e)}"
             # Parse command string into list of arguments to avoid shell injection
             try:
                 args = shlex.split(command)
@@ -81,16 +74,12 @@ class ExecTool(Tool):
             if not args:
                 return "Error: Empty command"
 
-            process = await asyncio.create_subprocess_exec(
-                *args,
-            program = args[0]
-            arguments = args[1:]
+            guard_error = self._guard_args(args, cwd)
+            if guard_error:
+                return guard_error
 
             process = await asyncio.create_subprocess_exec(
-                program,
-                *arguments,
-                args[0],
-                *args[1:],
+                *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
@@ -133,10 +122,15 @@ class ExecTool(Tool):
         except Exception as e:
             return f"Error executing command: {str(e)}"
 
-    def _guard_command(self, command: str, cwd: str) -> str | None:
+    def _guard_args(self, args: list[str], cwd: str) -> str | None:
         """Best-effort safety guard for potentially destructive commands."""
-        cmd = command.strip()
-        lower = cmd.lower()
+
+        # We join the parsed arguments back together with a single space
+        # so that our regex patterns can still work, but without needing
+        # to handle tricky shell escapes, quotes, etc that shlex stripped out.
+        # It's an approximation, but better than scanning the raw string.
+        normalized_cmd = " ".join(args)
+        lower = normalized_cmd.lower()
 
         for pattern in self.deny_patterns:
             if re.search(pattern, lower):
@@ -147,23 +141,22 @@ class ExecTool(Tool):
                 return "Error: Command blocked by safety guard (not in allowlist)"
 
         if self.restrict_to_workspace:
-            if "..\\" in cmd or "../" in cmd:
-                return "Error: Command blocked by safety guard (path traversal detected)"
-
             cwd_path = Path(cwd).resolve()
 
-            win_paths = re.findall(r"[A-Za-z]:\\[^\\\"']+", cmd)
-            # Only match absolute paths — avoid false positives on relative
-            # paths like ".venv/bin/python" where "/bin/python" would be
-            # incorrectly extracted by the old pattern.
-            posix_paths = re.findall(r"(?:^|[\s|>])(/[^\s\"'>]+)", cmd)
+            for arg in args:
+                if "..\\" in arg or "../" in arg:
+                    return "Error: Command blocked by safety guard (path traversal detected)"
 
-            for raw in win_paths + posix_paths:
                 try:
-                    p = Path(raw.strip()).resolve()
+                    # Treat argument as a potential path. If it resolves outside the workspace, block it.
+                    # We check if it looks like an absolute path to avoid resolving every single random argument.
+                    # On windows absolute paths might start with C:\ or similar.
+                    # On linux with /
+                    if re.match(r"^([A-Za-z]:\\|/)", arg):
+                        p = Path(arg).resolve()
+                        if p.is_absolute() and cwd_path not in p.parents and p != cwd_path:
+                            return "Error: Command blocked by safety guard (path outside working dir)"
                 except Exception:
                     continue
-                if p.is_absolute() and cwd_path not in p.parents and p != cwd_path:
-                    return "Error: Command blocked by safety guard (path outside working dir)"
 
         return None
