@@ -18,6 +18,8 @@ from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import MochatConfig
 from nanobot.utils.helpers import get_data_path
 
+import importlib.util
+
 try:
     import socketio
     SOCKETIO_AVAILABLE = True
@@ -25,11 +27,7 @@ except ImportError:
     socketio = None
     SOCKETIO_AVAILABLE = False
 
-try:
-    import msgpack  # noqa: F401
-    MSGPACK_AVAILABLE = True
-except ImportError:
-    MSGPACK_AVAILABLE = False
+MSGPACK_AVAILABLE = importlib.util.find_spec("msgpack") is not None
 
 MAX_SEEN_MESSAGE_IDS = 2000
 CURSOR_SAVE_DEBOUNCE_S = 0.5
