@@ -63,15 +63,8 @@ class ExecTool(Tool):
     
     async def execute(self, command: str, working_dir: str | None = None, **kwargs: Any) -> str:
         cwd = working_dir or self.working_dir or os.getcwd()
-        guard_error = self._guard_command(command, cwd)
-        if guard_error:
-            return guard_error
         
         try:
-            try:
-                args = shlex.split(command)
-            except ValueError as e:
-                return f"Error parsing command arguments: {str(e)}"
             # Parse command string into list of arguments to avoid shell injection
             try:
                 args = shlex.split(command)
@@ -81,14 +74,11 @@ class ExecTool(Tool):
             if not args:
                 return "Error: Empty command"
 
-            process = await asyncio.create_subprocess_exec(
-                *args,
-            program = args[0]
-            arguments = args[1:]
+            guard_error = self._guard_args(args, cwd)
+            if guard_error:
+                return guard_error
 
             process = await asyncio.create_subprocess_exec(
-                program,
-                *arguments,
                 args[0],
                 *args[1:],
                 stdout=asyncio.subprocess.PIPE,
@@ -133,10 +123,11 @@ class ExecTool(Tool):
         except Exception as e:
             return f"Error executing command: {str(e)}"
 
-    def _guard_command(self, command: str, cwd: str) -> str | None:
+    def _guard_args(self, args: list[str], cwd: str) -> str | None:
         """Best-effort safety guard for potentially destructive commands."""
-        cmd = command.strip()
-        lower = cmd.lower()
+        # Join arguments into a normalized command string for regex checks
+        normalized_cmd = shlex.join(args)
+        lower = normalized_cmd.lower()
 
         for pattern in self.deny_patterns:
             if re.search(pattern, lower):
@@ -147,23 +138,19 @@ class ExecTool(Tool):
                 return "Error: Command blocked by safety guard (not in allowlist)"
 
         if self.restrict_to_workspace:
-            if "..\\" in cmd or "../" in cmd:
-                return "Error: Command blocked by safety guard (path traversal detected)"
-
             cwd_path = Path(cwd).resolve()
 
-            win_paths = re.findall(r"[A-Za-z]:\\[^\\\"']+", cmd)
-            # Only match absolute paths — avoid false positives on relative
-            # paths like ".venv/bin/python" where "/bin/python" would be
-            # incorrectly extracted by the old pattern.
-            posix_paths = re.findall(r"(?:^|[\s|>])(/[^\s\"'>]+)", cmd)
+            for arg in args:
+                if ".." in arg:
+                    return "Error: Command blocked by safety guard (path traversal detected)"
 
-            for raw in win_paths + posix_paths:
                 try:
-                    p = Path(raw.strip()).resolve()
+                    p = Path(arg)
+                    if p.is_absolute():
+                        resolved = p.resolve()
+                        if cwd_path not in resolved.parents and resolved != cwd_path:
+                            return "Error: Command blocked by safety guard (path outside working dir)"
                 except Exception:
                     continue
-                if p.is_absolute() and cwd_path not in p.parents and p != cwd_path:
-                    return "Error: Command blocked by safety guard (path outside working dir)"
 
         return None
