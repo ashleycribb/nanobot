@@ -74,6 +74,7 @@ class ReadFileTool(Tool):
 
     async def execute(self, path: str, **kwargs: Any) -> str:
         try:
+            return await asyncio.to_thread(self._read_sync, path, self._allowed_dir)
             return await asyncio.to.thread(self._read_sync, path, self._allowed_dir)
         except PermissionError as e:
             return f"Error: {e}"
