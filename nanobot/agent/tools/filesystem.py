@@ -42,6 +42,25 @@ class ReadFileTool(Tool):
             "required": ["path"]
         }
 
+    async def execute(self, path: str, **kwargs: Any) -> str:
+        try:
+            return await asyncio.to_thread(self._read_file, path)
+        except Exception as e:
+            return f"Error reading file: {str(e)}"
+
+    def _read_file(self, path: str) -> str:
+        try:
+            file_path = _resolve_path(path, self._allowed_dir)
+            if not file_path.exists():
+                return f"Error: File not found: {path}"
+            if not file_path.is_file():
+                return f"Error: Not a file: {path}"
+
+            content = file_path.read_text(encoding="utf-8")
+            return content
+        except Exception as e:
+            return f"Error reading file: {str(e)}"
+    
     @staticmethod
     def _read_sync(path: str, allowed_dir: Path | None) -> str:
         file_path = _resolve_path(path, allowed_dir)
@@ -95,6 +114,12 @@ class WriteFileTool(Tool):
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content, encoding="utf-8")
         return f"Successfully wrote {len(content)} bytes to {file_path}"
+
+    async def execute(self, path: str, content: str, **kwargs: Any) -> str:
+        try:
+            return await asyncio.to_thread(self._write_file, path, content)
+        except Exception as e:
+            return f"Error writing file: {str(e)}"
 
     @staticmethod
     def _write_sync(path: str, content: str, allowed_dir: Path | None) -> str:
@@ -165,6 +190,9 @@ class EditFileTool(Tool):
 
     async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
         try:
+            return await asyncio.to_thread(self._edit_file, path, old_text, new_text)
+        except Exception as e:
+            return f"Error editing file: {str(e)}"
 
         return f"Successfully edited {path}"
 

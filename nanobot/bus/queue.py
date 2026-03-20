@@ -100,6 +100,28 @@ class MessageBus:
             try:
                 # Get next message from main outbound queue
                 msg = await asyncio.wait_for(self.outbound.get(), timeout=1.0)
+
+                channel = msg.channel
+
+                # Ensure we have a queue and worker for this channel
+                if channel not in self._channel_queues:
+                    self._channel_queues[channel] = asyncio.Queue()
+
+                if channel not in self._channel_tasks or self._channel_tasks[channel].done():
+                    self._channel_tasks[channel] = asyncio.create_task(
+                        self._process_channel_queue(channel)
+                    )
+
+                # Push to specific channel queue
+                await self._channel_queues[channel].put(msg)
+
+            except asyncio.TimeoutError:
+                continue
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in main dispatcher: {e}")
+                await asyncio.sleep(0.1) # Prevent tight loop on error
                 subscribers = self._outbound_subscribers.get(msg.channel, [])
                 for callback in subscribers:
                     asyncio.create_task(self._safe_dispatch(callback, msg))

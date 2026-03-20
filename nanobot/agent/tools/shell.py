@@ -66,6 +66,10 @@ class ExecTool(Tool):
 
         
         try:
+            try:
+                args = shlex.split(command)
+            except ValueError as e:
+                return f"Error parsing command arguments: {str(e)}"
             # Parse command string into list of arguments to avoid shell injection
             try:
                 args = shlex.split(command)
