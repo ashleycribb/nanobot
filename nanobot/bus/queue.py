@@ -100,6 +100,24 @@ class MessageBus:
             try:
                 # Get next message from main outbound queue
                 msg = await asyncio.wait_for(self.outbound.get(), timeout=1.0)
+                subscribers = self._outbound_subscribers.get(msg.channel, [])
+                for callback in subscribers:
+                    asyncio.create_task(self._safe_dispatch(callback, msg))
+            except asyncio.TimeoutError:
+                continue
+
+    async def dispatch_outbound(self) -> None:
+        """
+        Dispatch outbound messages to subscribed channels.
+        Run this as a background task.
+        """
+        self._running = True
+        self._dispatch_task = asyncio.current_task()
+
+        while self._running:
+            try:
+                # Get next message from main outbound queue
+                msg = await asyncio.wait_for(self.outbound.get(), timeout=1.0)
 
                 channel = msg.channel
 
