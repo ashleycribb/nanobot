@@ -86,90 +86,31 @@ def test_get_workspace_path_custom(tmp_path):
     assert result == custom_ws
     assert result.exists()
     assert result.is_dir()
-"""Tests for utility functions."""
-import pytest
-from nanobot.utils.helpers import truncate_string
 
-def test_truncate_string_basic():
-    """Test basic truncation."""
-    s = "hello world"
-    assert truncate_string(s, 5) == "he..."
+def test_get_workspace_path_expanded(monkeypatch, tmp_path):
+    """Test get_workspace_path with a path that needs expanding."""
+    def mock_expanduser(self):
+        return tmp_path / str(self)[2:] if str(self).startswith("~") else self
 
-def test_truncate_string_short():
-    """Test no truncation when string is short."""
-    s = "hi"
-    assert truncate_string(s, 5) == "hi"
+    monkeypatch.setattr(Path, "expanduser", mock_expanduser)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    custom_ws = "~/my_expanded_workspace"
 
-def test_truncate_string_exact():
-    """Test no truncation when string is exact length."""
-    s = "hello"
-    assert truncate_string(s, 5) == "hello"
+    expected_path = tmp_path / "my_expanded_workspace"
+    assert not expected_path.exists()
 
-def test_truncate_string_custom_suffix():
-    """Test custom suffix."""
-    s = "hello world"
-    assert truncate_string(s, 5, suffix=".") == "hell."
+    result = get_workspace_path(custom_ws)
 
-def test_truncate_string_empty():
-    """Test empty string."""
-    assert truncate_string("", 5) == ""
+    assert result == expected_path
+    assert result.exists()
+    assert result.is_dir()
 
-def test_truncate_string_suffix_too_long():
-    """Test when suffix is longer than max_len."""
-    s = "hello world"
-    # Current implementation might fail this, or return something longer.
-    # We expect it to be truncated to max_len, possibly without suffix or with truncated suffix.
-    # For now, let's assert it returns max_len chars.
-    result = truncate_string(s, 2, suffix="...")
-    assert len(result) <= 2
-"""Tests for nanobot.utils.helpers."""
+def test_get_workspace_path_none(monkeypatch, tmp_path):
+    """Test get_workspace_path with None explicitly."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
-import pytest
-from nanobot.utils.helpers import truncate_string
-
-
-def test_truncate_string_shorter_than_max():
-    """String shorter than max_len should return as is."""
-    text = "Hello"
-    assert truncate_string(text, max_len=10) == "Hello"
-
-
-def test_truncate_string_exact_max():
-    """String equal to max_len should return as is."""
-    text = "Hello World"
-    assert truncate_string(text, max_len=11) == "Hello World"
-
-
-def test_truncate_string_longer_than_max():
-    """String longer than max_len should be truncated with suffix."""
-    text = "Hello World"
-    # max_len=8, suffix="..." (len 3). Expect 8-3=5 chars + "..." -> "Hello..."
-    assert truncate_string(text, max_len=8) == "Hello..."
-    assert len(truncate_string(text, max_len=8)) == 8
-
-
-def test_truncate_string_custom_suffix():
-    """Custom suffix should be used."""
-    text = "Hello World"
-    # max_len=8, suffix=".." (len 2). Expect 8-2=6 chars + ".." -> "Hello .."
-    assert truncate_string(text, max_len=8, suffix="..") == "Hello .."
-    assert len(truncate_string(text, max_len=8, suffix="..")) == 8
-
-
-def test_truncate_string_empty_string():
-    """Empty string should be returned as is (length 0 <= max_len)."""
-    assert truncate_string("", max_len=5) == ""
-
-
-def test_truncate_string_suffix_only():
-    """If max_len equals suffix length, should return suffix only."""
-    text = "Hello World"
-    suffix = "..."
-    # max_len=3. 3-3=0 chars + suffix -> "..."
-    assert truncate_string(text, max_len=3, suffix=suffix) == "..."
-    assert len(truncate_string(text, max_len=3, suffix=suffix)) == 3
-
-
+    expected_path = tmp_path / ".nanobot" / "workspace"
+    assert not expected_path.exists()
 def test_truncate_string_very_short_max_len():
     """
     Test behavior when max_len is very short.
@@ -179,15 +120,11 @@ def test_truncate_string_very_short_max_len():
     # max_len=2, suffix="..." (len 3). max_len < len(suffix), so return text[:2] -> "He"
     assert truncate_string(text, max_len=2, suffix="...") == "He"
 
+    result = get_workspace_path(None)
 
-def test_truncate_string_default_args():
-    """Test default arguments (max_len=100, suffix='...')."""
-    text = "a" * 105
-    truncated = truncate_string(text)
-    assert len(truncated) == 100
-    assert truncated.endswith("...")
-    assert truncated.startswith("a" * 97)
-import pytest
+    assert result == expected_path
+    assert result.exists()
+    assert result.is_dir()
 
 from nanobot.utils.helpers import truncate_string
 
