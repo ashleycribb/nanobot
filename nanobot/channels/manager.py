@@ -28,6 +28,8 @@ class ChannelManager:
         self.bus = bus
         self.channels: dict[str, BaseChannel] = {}
         self._dispatch_task: asyncio.Task | None = None
+        self._channel_queues: dict[tuple[str, str], asyncio.Queue] = {}
+        self._channel_workers: dict[tuple[str, str], asyncio.Task] = {}
         self._active_tasks: dict[str, asyncio.Task] = {}
         
         self._init_channels()
@@ -196,6 +198,62 @@ class ChannelManager:
                 logger.info(f"Stopped {name} channel")
             except Exception as e:
                 logger.error(f"Error stopping {name}: {e}")
+    
+    async def _send_worker(self, key: tuple[str, str]) -> None:
+        """Process messages for a specific channel/chat ID sequentially."""
+        channel_name, _ = key
+        channel = self.channels.get(channel_name)
+        queue = self._channel_queues.get(key)
+
+        # If queue is gone, just cleanup worker entry
+        if not queue:
+            if key in self._channel_workers:
+                del self._channel_workers[key]
+            return
+
+        # If channel is gone, drain queue and cleanup
+        if not channel:
+            logger.warning(f"Channel {channel_name} not found, draining queue {key}")
+            try:
+                while True:
+                    queue.get_nowait()
+                    queue.task_done()
+            except asyncio.QueueEmpty:
+                pass
+
+            if key in self._channel_workers:
+                del self._channel_workers[key]
+            if key in self._channel_queues:
+                del self._channel_queues[key]
+            return
+
+        try:
+            while True:
+                try:
+                    msg = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    # Cleanup atomically since no await in this block
+                    if key in self._channel_workers:
+                        del self._channel_workers[key]
+                    if key in self._channel_queues:
+                        del self._channel_queues[key]
+                    return
+
+                try:
+                    await channel.send(msg)
+                except Exception as e:
+                    logger.error(f"Error sending to {msg.channel}: {e}")
+                finally:
+                    queue.task_done()
+        except Exception as e:
+            logger.error(f"Worker error for {key}: {e}")
+            # Ensure cleanup on error
+            if key in self._channel_workers:
+                del self._channel_workers[key]
+            if key in self._channel_queues:
+                del self._channel_queues[key]
+    async def _send_message_safe(self, channel: BaseChannel, msg: OutboundMessage) -> None:
+        """Send a message and log any errors."""
 
 
     async def _process_message(
@@ -229,8 +287,10 @@ class ChannelManager:
                     timeout=1.0
                 )
                 
+                if msg.channel not in self.channels:
                 channel = self.channels.get(msg.channel)
                 if channel:
+                    asyncio.create_task(self._send_message_safe(channel, msg))
                     # Create a unique key for channel+chat
                     key = f"{msg.channel}:{msg.chat_id}"
                     previous_task = self._active_tasks.get(key)
@@ -251,6 +311,20 @@ class ChannelManager:
 
                 else:
                     logger.warning(f"Unknown channel: {msg.channel}")
+                    continue
+
+                # Use (channel, chat_id) as key to preserve order per chat
+                key = (msg.channel, msg.chat_id)
+
+                if key not in self._channel_queues:
+                    self._channel_queues[key] = asyncio.Queue()
+
+                # We use put_nowait because queue is unbounded
+                self._channel_queues[key].put_nowait(msg)
+
+                # Ensure worker is running
+                if key not in self._channel_workers or self._channel_workers[key].done():
+                    self._channel_workers[key] = asyncio.create_task(self._send_worker(key))
                     
             except asyncio.TimeoutError:
                 continue
