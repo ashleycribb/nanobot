@@ -4,6 +4,7 @@
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
+import { randomBytes } from 'crypto';
 import { WhatsAppClient, InboundMessage } from './whatsapp.js';
 
 interface SendCommand {
@@ -25,10 +26,18 @@ export class BridgeServer {
   constructor(private port: number, private authDir: string, private token?: string) {}
 
   async start(): Promise<void> {
+    // Generate secure token if none provided
+    if (!this.token) {
+      this.token = randomBytes(32).toString('hex');
+      console.warn('⚠️ No BRIDGE_TOKEN provided. Generated secure token:');
+      console.warn(this.token);
+      console.warn('Please update your client configuration with this token.');
+    }
+
     // Bind to localhost only — never expose to external network
     this.wss = new WebSocketServer({ host: '127.0.0.1', port: this.port });
     console.log(`🌉 Bridge server listening on ws://127.0.0.1:${this.port}`);
-    if (this.token) console.log('🔒 Token authentication enabled');
+    console.log('🔒 Token authentication enabled');
 
     // Initialize WhatsApp client
     this.wa = new WhatsAppClient({
@@ -40,27 +49,25 @@ export class BridgeServer {
 
     // Handle WebSocket connections
     this.wss.on('connection', (ws) => {
-      if (this.token) {
-        // Require auth handshake as first message
-        const timeout = setTimeout(() => ws.close(4001, 'Auth timeout'), 5000);
-        ws.once('message', (data) => {
-          clearTimeout(timeout);
-          try {
-            const msg = JSON.parse(data.toString());
-            if (msg.type === 'auth' && msg.token === this.token) {
-              console.log('🔗 Python client authenticated');
-              this.setupClient(ws);
-            } else {
-              ws.close(4003, 'Invalid token');
-            }
-          } catch {
-            ws.close(4003, 'Invalid auth message');
+      // Require auth handshake as first message
+      const timeout = setTimeout(() => ws.close(4001, 'Auth timeout'), 5000);
+
+      ws.once('message', (data) => {
+        clearTimeout(timeout);
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.type === 'auth' && msg.token === this.token) {
+            console.log('🔗 Python client authenticated');
+            this.setupClient(ws);
+          } else {
+            console.warn('⚠️ Authentication failed: Invalid token');
+            ws.close(4003, 'Invalid token');
           }
-        });
-      } else {
-        console.log('🔗 Python client connected');
-        this.setupClient(ws);
-      }
+        } catch {
+          console.warn('⚠️ Authentication failed: Invalid auth message');
+          ws.close(4003, 'Invalid auth message');
+        }
+      });
     });
 
     // Connect to WhatsApp

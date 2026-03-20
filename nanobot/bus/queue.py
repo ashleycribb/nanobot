@@ -69,13 +69,17 @@ class MessageBus:
                 # Since get() is cancellable, simple await is fine.
                 msg = await queue.get()
 
-                # Process all subscribers for this channel
+                # Process all subscribers for this channel concurrently
                 subscribers = self._outbound_subscribers.get(msg.channel, [])
-                for callback in subscribers:
-                    try:
-                        await callback(msg)
-                    except Exception as e:
-                        logger.error(f"Error dispatching to {msg.channel}: {e}")
+                if subscribers:
+                    async def _safe_callback(cb, m):
+                        try:
+                            await cb(m)
+                        except Exception as e:
+                            logger.error(f"Error dispatching to {m.channel}: {e}")
+
+                    tasks = [_safe_callback(cb, msg) for cb in subscribers]
+                    await asyncio.gather(*tasks)
 
                 queue.task_done()
 
@@ -83,6 +87,24 @@ class MessageBus:
                 break
             except Exception as e:
                 logger.error(f"Error in channel worker {channel}: {e}")
+
+    async def dispatch_outbound(self) -> None:
+        """
+        Dispatch outbound messages to subscribed channels.
+        Run this as a background task.
+        """
+        self._running = True
+        self._dispatch_task = asyncio.current_task()
+
+        while self._running:
+            try:
+                # Get next message from main outbound queue
+                msg = await asyncio.wait_for(self.outbound.get(), timeout=1.0)
+                subscribers = self._outbound_subscribers.get(msg.channel, [])
+                for callback in subscribers:
+                    asyncio.create_task(self._safe_dispatch(callback, msg))
+            except asyncio.TimeoutError:
+                continue
 
     async def dispatch_outbound(self) -> None:
         """
@@ -118,6 +140,22 @@ class MessageBus:
             except Exception as e:
                 logger.error(f"Error in main dispatcher: {e}")
                 await asyncio.sleep(0.1) # Prevent tight loop on error
+                subscribers = self._outbound_subscribers.get(msg.channel, [])
+                for callback in subscribers:
+                    asyncio.create_task(self._safe_dispatch(callback, msg))
+            except asyncio.TimeoutError:
+                continue
+
+    async def _safe_dispatch(
+        self,
+        callback: Callable[[OutboundMessage], Awaitable[None]],
+        msg: OutboundMessage
+    ) -> None:
+        """Execute a subscriber callback and handle exceptions."""
+        try:
+            await callback(msg)
+        except Exception as e:
+            logger.error(f"Error dispatching to {msg.channel}: {e}")
     
     def stop(self) -> None:
         """Stop the dispatcher loop."""
