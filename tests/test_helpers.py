@@ -116,6 +116,7 @@ def test_truncate_string_very_short_max_len():
     Test behavior when max_len is very short.
     """
     text = "Hello"
+    assert truncate_string(text, max_len=2, suffix="...") == ".."
     # max_len=2, suffix="..." (len 3). 2-3=-1. text[:-1] -> "Hell". Result: "Hell..."
     # This is a known issue/behavior of the current implementation.
     # The requirement is to 'Add unit tests', so we document current behavior.
@@ -171,6 +172,8 @@ def test_truncate_string_max_len_smaller_than_suffix():
     Test edge case where max_len is smaller than the length of the suffix.
     """
     s = "hello world"
+    result = truncate_string(s, max_len=2, suffix="...")
+    assert result == ".."
     # max_len (2) < len("...") (3)
     # 2 - 3 = -1, so it returns suffix[:2] -> ".."
     result = truncate_string(s, max_len=2, suffix="...")

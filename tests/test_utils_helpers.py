@@ -34,6 +34,7 @@ def test_truncate_string_suffix_longer_than_max_len():
     # Desired behavior: return string of max_len, maybe just suffix truncated or hard truncation.
     # Let's assume we want hard truncation if suffix doesn't fit.
     result = truncate_string(s, max_len=2, suffix="...")
+    assert result == ".."
     assert len(result) <= 2
 
 def test_truncate_string_max_len_equals_suffix_len():
