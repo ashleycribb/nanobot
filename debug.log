@@ -1,0 +1,6 @@
+Benchmarking write of 10MB file to /tmp/tmpd6f3jf48/large_file.txt...
+Monitor started
+Stopping monitor
+Monitor stopped
+Total time taken: 0.0181s
+Max blocking time observed: 0.0005s
