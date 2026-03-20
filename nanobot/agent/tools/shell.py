@@ -79,6 +79,8 @@ class ExecTool(Tool):
                 return guard_error
 
             process = await asyncio.create_subprocess_exec(
+                args[0],
+                *args[1:],
                 *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -124,6 +126,8 @@ class ExecTool(Tool):
 
     def _guard_args(self, args: list[str], cwd: str) -> str | None:
         """Best-effort safety guard for potentially destructive commands."""
+        # Join arguments into a normalized command string for regex checks
+        normalized_cmd = shlex.join(args)
 
         # We join the parsed arguments back together with a single space
         # so that our regex patterns can still work, but without needing
@@ -144,6 +148,14 @@ class ExecTool(Tool):
             cwd_path = Path(cwd).resolve()
 
             for arg in args:
+                if ".." in arg:
+                    return "Error: Command blocked by safety guard (path traversal detected)"
+
+                try:
+                    p = Path(arg)
+                    if p.is_absolute():
+                        resolved = p.resolve()
+                        if cwd_path not in resolved.parents and resolved != cwd_path:
                 if "..\\" in arg or "../" in arg:
                     return "Error: Command blocked by safety guard (path traversal detected)"
 
