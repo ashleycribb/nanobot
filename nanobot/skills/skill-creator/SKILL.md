@@ -286,6 +286,7 @@ The script:
 
 - Creates the skill directory at the specified path
 - Generates a SKILL.md template with proper frontmatter and placeholders
+- Generates a SKILL.md template with proper frontmatter and placeholders to be filled
 - Optionally creates resource directories based on `--resources`
 - Optionally adds example files when `--examples` is set
 

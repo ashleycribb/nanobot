@@ -28,22 +28,31 @@ class ChannelManager:
         self.bus = bus
         self.channels: dict[str, BaseChannel] = {}
         self._dispatch_task: asyncio.Task | None = None
+        self._channel_queues: dict[tuple[str, str], asyncio.Queue] = {}
+        self._channel_workers: dict[tuple[str, str], asyncio.Task] = {}
+        self._active_tasks: dict[str, asyncio.Task] = {}
         
         self._init_channels()
     
     def _init_channels(self) -> None:
         """Initialize channels based on config."""
         
+        # Helper to register channel
+        def _register(name: str, channel: BaseChannel):
+            self.channels[name] = channel
+            self.bus.subscribe_outbound(name, channel.send)
+            logger.info(f"{name.capitalize()} channel enabled")
+
         # Telegram channel
         if self.config.channels.telegram.enabled:
             try:
                 from nanobot.channels.telegram import TelegramChannel
-                self.channels["telegram"] = TelegramChannel(
+                channel = TelegramChannel(
                     self.config.channels.telegram,
                     self.bus,
                     groq_api_key=self.config.providers.groq.api_key,
                 )
-                logger.info("Telegram channel enabled")
+                _register("telegram", channel)
             except ImportError as e:
                 logger.warning(f"Telegram channel not available: {e}")
         
@@ -51,10 +60,10 @@ class ChannelManager:
         if self.config.channels.whatsapp.enabled:
             try:
                 from nanobot.channels.whatsapp import WhatsAppChannel
-                self.channels["whatsapp"] = WhatsAppChannel(
+                channel = WhatsAppChannel(
                     self.config.channels.whatsapp, self.bus
                 )
-                logger.info("WhatsApp channel enabled")
+                _register("whatsapp", channel)
             except ImportError as e:
                 logger.warning(f"WhatsApp channel not available: {e}")
 
@@ -62,10 +71,10 @@ class ChannelManager:
         if self.config.channels.discord.enabled:
             try:
                 from nanobot.channels.discord import DiscordChannel
-                self.channels["discord"] = DiscordChannel(
+                channel = DiscordChannel(
                     self.config.channels.discord, self.bus
                 )
-                logger.info("Discord channel enabled")
+                _register("discord", channel)
             except ImportError as e:
                 logger.warning(f"Discord channel not available: {e}")
         
@@ -73,10 +82,10 @@ class ChannelManager:
         if self.config.channels.feishu.enabled:
             try:
                 from nanobot.channels.feishu import FeishuChannel
-                self.channels["feishu"] = FeishuChannel(
+                channel = FeishuChannel(
                     self.config.channels.feishu, self.bus
                 )
-                logger.info("Feishu channel enabled")
+                _register("feishu", channel)
             except ImportError as e:
                 logger.warning(f"Feishu channel not available: {e}")
 
@@ -84,11 +93,10 @@ class ChannelManager:
         if self.config.channels.mochat.enabled:
             try:
                 from nanobot.channels.mochat import MochatChannel
-
-                self.channels["mochat"] = MochatChannel(
+                channel = MochatChannel(
                     self.config.channels.mochat, self.bus
                 )
-                logger.info("Mochat channel enabled")
+                _register("mochat", channel)
             except ImportError as e:
                 logger.warning(f"Mochat channel not available: {e}")
 
@@ -96,10 +104,10 @@ class ChannelManager:
         if self.config.channels.dingtalk.enabled:
             try:
                 from nanobot.channels.dingtalk import DingTalkChannel
-                self.channels["dingtalk"] = DingTalkChannel(
+                channel = DingTalkChannel(
                     self.config.channels.dingtalk, self.bus
                 )
-                logger.info("DingTalk channel enabled")
+                _register("dingtalk", channel)
             except ImportError as e:
                 logger.warning(f"DingTalk channel not available: {e}")
 
@@ -107,10 +115,10 @@ class ChannelManager:
         if self.config.channels.email.enabled:
             try:
                 from nanobot.channels.email import EmailChannel
-                self.channels["email"] = EmailChannel(
+                channel = EmailChannel(
                     self.config.channels.email, self.bus
                 )
-                logger.info("Email channel enabled")
+                _register("email", channel)
             except ImportError as e:
                 logger.warning(f"Email channel not available: {e}")
 
@@ -118,10 +126,10 @@ class ChannelManager:
         if self.config.channels.slack.enabled:
             try:
                 from nanobot.channels.slack import SlackChannel
-                self.channels["slack"] = SlackChannel(
+                channel = SlackChannel(
                     self.config.channels.slack, self.bus
                 )
-                logger.info("Slack channel enabled")
+                _register("slack", channel)
             except ImportError as e:
                 logger.warning(f"Slack channel not available: {e}")
 
@@ -129,11 +137,11 @@ class ChannelManager:
         if self.config.channels.qq.enabled:
             try:
                 from nanobot.channels.qq import QQChannel
-                self.channels["qq"] = QQChannel(
+                channel = QQChannel(
                     self.config.channels.qq,
                     self.bus,
                 )
-                logger.info("QQ channel enabled")
+                _register("qq", channel)
             except ImportError as e:
                 logger.warning(f"QQ channel not available: {e}")
     
@@ -151,7 +159,8 @@ class ChannelManager:
             return
         
         # Start outbound dispatcher
-        self._dispatch_task = asyncio.create_task(self._dispatch_outbound())
+        self._dispatch_task = asyncio.create_task(self.bus.dispatch_outbound())
+        logger.info("Outbound dispatcher started")
         
         # Start channels
         tasks = []
@@ -167,6 +176,7 @@ class ChannelManager:
         logger.info("Stopping all channels...")
         
         # Stop dispatcher
+        self.bus.stop()
         if self._dispatch_task:
             self._dispatch_task.cancel()
             try:
@@ -174,6 +184,13 @@ class ChannelManager:
             except asyncio.CancelledError:
                 pass
         
+        # Cancel all active message tasks
+        for task in self._active_tasks.values():
+            task.cancel()
+        if self._active_tasks:
+            await asyncio.gather(*self._active_tasks.values(), return_exceptions=True)
+        self._active_tasks.clear()
+
         # Stop all channels
         for name, channel in self.channels.items():
             try:
@@ -182,6 +199,83 @@ class ChannelManager:
             except Exception as e:
                 logger.error(f"Error stopping {name}: {e}")
     
+    async def _send_worker(self, key: tuple[str, str]) -> None:
+        """Process messages for a specific channel/chat ID sequentially."""
+        channel_name, _ = key
+        channel = self.channels.get(channel_name)
+        queue = self._channel_queues.get(key)
+
+        # If queue is gone, just cleanup worker entry
+        if not queue:
+            if key in self._channel_workers:
+                del self._channel_workers[key]
+            return
+
+        # If channel is gone, drain queue and cleanup
+        if not channel:
+            logger.warning(f"Channel {channel_name} not found, draining queue {key}")
+            try:
+                while True:
+                    queue.get_nowait()
+                    queue.task_done()
+            except asyncio.QueueEmpty:
+                pass
+
+            if key in self._channel_workers:
+                del self._channel_workers[key]
+            if key in self._channel_queues:
+                del self._channel_queues[key]
+            return
+
+        try:
+            while True:
+                try:
+                    msg = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    # Cleanup atomically since no await in this block
+                    if key in self._channel_workers:
+                        del self._channel_workers[key]
+                    if key in self._channel_queues:
+                        del self._channel_queues[key]
+                    return
+
+                try:
+                    await channel.send(msg)
+                except Exception as e:
+                    logger.error(f"Error sending to {msg.channel}: {e}")
+                finally:
+                    queue.task_done()
+        except Exception as e:
+            logger.error(f"Worker error for {key}: {e}")
+            # Ensure cleanup on error
+            if key in self._channel_workers:
+                del self._channel_workers[key]
+            if key in self._channel_queues:
+                del self._channel_queues[key]
+    async def _send_message_safe(self, channel: BaseChannel, msg: OutboundMessage) -> None:
+        """Send a message and log any errors."""
+
+
+    async def _process_message(
+        self,
+        previous_task: asyncio.Task | None,
+        channel: BaseChannel,
+        msg: OutboundMessage
+    ) -> None:
+        """Process message sequentially for a specific chat."""
+        if previous_task:
+            try:
+                await previous_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.warning(f"Previous message task failed: {e}")
+
+        try:
+            await channel.send(msg)
+        except Exception as e:
+            logger.error(f"Error sending to {msg.channel}: {e}")
+
     async def _dispatch_outbound(self) -> None:
         """Dispatch outbound messages to the appropriate channel."""
         logger.info("Outbound dispatcher started")
@@ -193,14 +287,44 @@ class ChannelManager:
                     timeout=1.0
                 )
                 
+                if msg.channel not in self.channels:
                 channel = self.channels.get(msg.channel)
                 if channel:
-                    try:
-                        await channel.send(msg)
-                    except Exception as e:
-                        logger.error(f"Error sending to {msg.channel}: {e}")
+                    asyncio.create_task(self._send_message_safe(channel, msg))
+                    # Create a unique key for channel+chat
+                    key = f"{msg.channel}:{msg.chat_id}"
+                    previous_task = self._active_tasks.get(key)
+
+                    # Create new task chaining off previous one
+                    task = asyncio.create_task(
+                        self._process_message(previous_task, channel, msg)
+                    )
+
+                    self._active_tasks[key] = task
+
+                    def done_callback(t: asyncio.Task, k: str = key) -> None:
+                        # Only cleanup if this is still the active task for the key
+                        if self._active_tasks.get(k) == t:
+                            del self._active_tasks[k]
+
+                    task.add_done_callback(done_callback)
+
                 else:
                     logger.warning(f"Unknown channel: {msg.channel}")
+                    continue
+
+                # Use (channel, chat_id) as key to preserve order per chat
+                key = (msg.channel, msg.chat_id)
+
+                if key not in self._channel_queues:
+                    self._channel_queues[key] = asyncio.Queue()
+
+                # We use put_nowait because queue is unbounded
+                self._channel_queues[key].put_nowait(msg)
+
+                # Ensure worker is running
+                if key not in self._channel_workers or self._channel_workers[key].done():
+                    self._channel_workers[key] = asyncio.create_task(self._send_worker(key))
                     
             except asyncio.TimeoutError:
                 continue
