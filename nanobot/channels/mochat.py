@@ -1,7 +1,5 @@
 """Mochat channel implementation using Socket.IO with HTTP polling fallback."""
 
-from __future__ import annotations
-
 import asyncio
 import json
 from collections import deque
