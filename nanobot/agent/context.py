@@ -43,15 +43,12 @@ class ContextBuilder:
         parts.append(self._get_identity())
         
         # Bootstrap files
-        bootstrap = await self._load_bootstrap_files()
+        bootstrap = self._load_bootstrap_files()
         if bootstrap:
             parts.append(bootstrap)
         
         # Memory context
         memory = await self.memory.get_memory_context()
-        memory = await asyncio.to_thread(self.memory.get_memory_context)
-        memory = await self.memory.get_memory_context()
-        memory = await self.memory.aget_memory_context()
         if memory:
             parts.append(f"# Memory\n\n{memory}")
         
@@ -213,6 +210,26 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
                 mime, b64 = result
                 images.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
 
+            if not p.is_file() or not mime or not mime.startswith("image/"):
+                return None
+
+            content = p.read_bytes()
+            b64 = base64.b64encode(content)
+            return {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64.decode()}"}
+            }
+
+        async def _read_and_encode_image(path_str: str) -> dict[str, str] | None:
+            # Run the entire file I/O + CPU intensive encoding in a separate thread
+            return await asyncio.to_thread(_sync_process_image, path_str)
+
+        # Process all media in parallel
+        tasks = [_read_and_encode_image(path) for path in media]
+        results = await asyncio.gather(*tasks)
+
+        images = [r for r in results if r is not None]
+        
         if not images:
             return text
 

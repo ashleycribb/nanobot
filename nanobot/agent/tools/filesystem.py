@@ -73,6 +73,7 @@ class ReadFileTool(Tool):
 
     async def execute(self, path: str, **kwargs: Any) -> str:
         try:
+            return await asyncio.to_thread(self._read_sync, path, self._allowed_dir)
             return await asyncio.to.thread(self._read_sync, path, self._allowed_dir)
         except PermissionError as e:
             return f"Error: {e}"
@@ -176,19 +177,16 @@ class EditFileTool(Tool):
             return f"Error: File not found: {path}"
 
         content = file_path.read_text(encoding="utf-8")
-
         if old_text not in content:
             return f"Error: old_text not found in file. Make sure it matches exactly."
 
-        # Count occurrences
         count = content.count(old_text)
         if count > 1:
             return f"Warning: old_text appears {count} times. Please provide more context to make it unique."
 
         new_content = content.replace(old_text, new_text, 1)
         file_path.write_text(new_content, encoding="utf-8")
-
-        return f"Successfully edited {file_path}"
+        return f"Successfully edited {path}"
 
     async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
         try:
@@ -196,11 +194,13 @@ class EditFileTool(Tool):
         except Exception as e:
             return f"Error editing file: {str(e)}"
 
+        return f"Successfully edited {path}"
+
     async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
         try:
             return await asyncio.to_thread(self._edit_sync, path, old_text, new_text, self._allowed_dir)
-        except PermissionError as e:
-            return f"Error: {e}"
+        except Exception as e:
+            return f"Error: {str(e)}"
 
 
 class ListDirTool(Tool):
@@ -249,9 +249,29 @@ class ListDirTool(Tool):
 
         return "\n".join(items)
 
-    async def execute(self, path: str, **kwargs: Any) -> str:
+    @staticmethod
+    def _list_sync(path: str, allowed_dir: Path | None) -> str:
+        dir_path = _resolve_path(path, allowed_dir)
+        if not dir_path.exists():
+            return f"Error: Directory not found: {path}"
+        if not dir_path.is_dir():
+            return f"Error: Not a directory: {path}"
+
         try:
-            return await asyncio.to_thread(self._list_dir, path)
+            items = []
+            for item in sorted(dir_path.iterdir()):
+                prefix = "📁 " if item.is_dir() else "📄 "
+                items.append(f"{prefix}{item.name}")
+
+            if not items:
+                return f"Directory {path} is empty"
+
+            return "\n".join(items)
         except Exception as e:
             return f"Error listing directory: {str(e)}"
 
+    async def execute(self, path: str, **kwargs: Any) -> str:
+        try:
+            return await asyncio.to_thread(self._list_sync, path, self._allowed_dir)
+        except Exception as e:
+            return f"Error: {str(e)}"
