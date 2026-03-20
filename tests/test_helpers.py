@@ -175,6 +175,7 @@ def test_truncate_string_very_short_max_len():
     Test behavior when max_len is very short.
     """
     text = "Hello"
+    assert truncate_string(text, max_len=2, suffix="...") == ".."
     # max_len=2, suffix="..." (len 3). max_len < len(suffix), so return text[:2] -> "He"
     assert truncate_string(text, max_len=2, suffix="...") == "He"
 
@@ -224,6 +225,8 @@ def test_truncate_string_max_len_smaller_than_suffix():
     """
     s = "hello world"
     # max_len (2) < len("...") (3)
+    result = truncate_string(s, max_len=2, suffix="...")
+    assert result == ".."
     # should return s[:2] -> "he"
     result = truncate_string(s, max_len=2, suffix="...")
     assert result == "he"
