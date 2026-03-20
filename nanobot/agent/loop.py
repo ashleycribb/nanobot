@@ -20,7 +20,7 @@ from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.cron import CronTool
-from nanobot.agent.memory import MemoryStore
+from nanobot.agent.memory import MemoryService
 from nanobot.agent.subagent import SubagentManager
 from nanobot.session.manager import Session, SessionManager
 
@@ -82,6 +82,12 @@ class AgentLoop:
             brave_api_key=brave_api_key,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
+        )
+        self.memory_service = MemoryService(
+            workspace=workspace,
+            provider=provider,
+            model=self.model,
+            memory_window=memory_window
         )
         
         self._running = False
@@ -263,7 +269,7 @@ class AgentLoop:
         logger.info(f"Processing message from {msg.channel}:{msg.sender_id}: {preview}")
         
         key = session_key or msg.session_key
-        session = self.sessions.get_or_create(key)
+        session = await self.sessions.aget_or_create(key)
         
         # Handle slash commands
         cmd = msg.content.strip().lower()
@@ -278,7 +284,7 @@ class AgentLoop:
             async def _consolidate_and_cleanup():
                 temp_session = Session(key=session.key)
                 temp_session.messages = messages_to_archive
-                await self._consolidate_memory(temp_session, archive_all=True)
+                await self.memory_service.consolidate(temp_session, archive_all=True)
 
             asyncio.create_task(_consolidate_and_cleanup())
             return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
@@ -288,7 +294,7 @@ class AgentLoop:
                                   content="🐈 nanobot commands:\n/new — Start a new conversation\n/help — Show available commands")
         
         if len(session.messages) > self.memory_window:
-            asyncio.create_task(self._consolidate_memory(session))
+            asyncio.create_task(self.memory_service.consolidate(session))
 
         self._set_tool_context(msg.channel, msg.chat_id)
         initial_messages = await self.context.build_messages(
@@ -339,7 +345,7 @@ class AgentLoop:
             origin_chat_id = msg.chat_id
         
         session_key = f"{origin_channel}:{origin_chat_id}"
-        session = self.sessions.get_or_create(session_key)
+        session = await self.sessions.aget_or_create(session_key)
         self._set_tool_context(origin_channel, origin_chat_id)
         initial_messages = await self.context.build_messages(
             history=session.get_history(max_messages=self.memory_window),
@@ -399,6 +405,7 @@ class AgentLoop:
             tools = f" [tools: {', '.join(m['tools_used'])}]" if m.get("tools_used") else ""
             lines.append(f"[{m.get('timestamp', '?')[:16]}] {m['role'].upper()}{tools}: {m['content']}")
         conversation = "\n".join(lines)
+        current_memory = await memory.read_long_term()
         current_memory = await memory.aread_long_term()
 
         prompt = f"""You are a memory consolidation agent. Process this conversation and return a JSON object with exactly two keys:
@@ -435,10 +442,10 @@ Respond with ONLY valid JSON, no markdown fences."""
                 return
 
             if entry := result.get("history_entry"):
-                memory.append_history(entry)
+                await memory.append_history(entry)
             if update := result.get("memory_update"):
                 if update != current_memory:
-                    memory.write_long_term(update)
+                    await memory.write_long_term(update)
 
             if archive_all:
                 session.last_consolidated = 0
