@@ -84,6 +84,8 @@ class ExecTool(Tool):
                 return guard_error
 
             process = await asyncio.create_subprocess_exec(
+                program,
+                *arguments,
                 args[0],
                 *args[1:],
                 *args,
