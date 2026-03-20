@@ -81,6 +81,7 @@ class ExecTool(Tool):
             process = await asyncio.create_subprocess_exec(
                 args[0],
                 *args[1:],
+                *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
@@ -127,6 +128,12 @@ class ExecTool(Tool):
         """Best-effort safety guard for potentially destructive commands."""
         # Join arguments into a normalized command string for regex checks
         normalized_cmd = shlex.join(args)
+
+        # We join the parsed arguments back together with a single space
+        # so that our regex patterns can still work, but without needing
+        # to handle tricky shell escapes, quotes, etc that shlex stripped out.
+        # It's an approximation, but better than scanning the raw string.
+        normalized_cmd = " ".join(args)
         lower = normalized_cmd.lower()
 
         for pattern in self.deny_patterns:
@@ -149,6 +156,17 @@ class ExecTool(Tool):
                     if p.is_absolute():
                         resolved = p.resolve()
                         if cwd_path not in resolved.parents and resolved != cwd_path:
+                if "..\\" in arg or "../" in arg:
+                    return "Error: Command blocked by safety guard (path traversal detected)"
+
+                try:
+                    # Treat argument as a potential path. If it resolves outside the workspace, block it.
+                    # We check if it looks like an absolute path to avoid resolving every single random argument.
+                    # On windows absolute paths might start with C:\ or similar.
+                    # On linux with /
+                    if re.match(r"^([A-Za-z]:\\|/)", arg):
+                        p = Path(arg).resolve()
+                        if p.is_absolute() and cwd_path not in p.parents and p != cwd_path:
                             return "Error: Command blocked by safety guard (path outside working dir)"
                 except Exception:
                     continue
