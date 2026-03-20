@@ -150,12 +150,6 @@ class TelegramChannel(BaseChannel):
             return "audio"
         return "document"
 
-    @staticmethod
-    def _read_file_bytes(path: str) -> bytes:
-        """Read file content as bytes."""
-        with open(path, 'rb') as f:
-            return f.read()
-
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through Telegram."""
         if not self._app:
@@ -181,12 +175,19 @@ class TelegramChannel(BaseChannel):
                 }.get(media_type, self._app.bot.send_document)
                 param = "photo" if media_type == "photo" else media_type if media_type in ("voice", "audio") else "document"
 
-                # Read file content in thread to avoid blocking loop
-                content = await asyncio.to_thread(self._read_file_bytes, media_path)
-                f = io.BytesIO(content)
-                f.name = media_path.rsplit("/", 1)[-1]
+                def read_media():
+                    with open(media_path, 'rb') as f:
+                        return f.read()
 
-                await sender(chat_id=chat_id, **{param: f})
+                # Use to_thread to read the file into memory without blocking the event loop
+                file_content = await asyncio.to_thread(read_media)
+
+                f_io = io.BytesIO(file_content)
+                f_io.name = media_path  # Important for telegram bot to recognize file extension
+
+                await sender(chat_id=chat_id, **{param: f_io})
+                # Pass the path directly; python-telegram-bot handles async file reading
+                await sender(chat_id=chat_id, **{param: media_path})
             except Exception as e:
                 filename = media_path.rsplit("/", 1)[-1]
                 logger.error(f"Failed to send media {media_path}: {e}")

@@ -106,16 +106,18 @@ class MessageBus:
             except asyncio.TimeoutError:
                 continue
 
-    async def _safe_dispatch(
-        self,
-        callback: Callable[[OutboundMessage], Awaitable[None]],
-        msg: OutboundMessage
-    ) -> None:
-        """Execute a subscriber callback and handle exceptions."""
-        try:
-            await callback(msg)
-        except Exception as e:
-            logger.error(f"Error dispatching to {msg.channel}: {e}")
+    async def dispatch_outbound(self) -> None:
+        """
+        Dispatch outbound messages to subscribed channels.
+        Run this as a background task.
+        """
+        self._running = True
+        self._dispatch_task = asyncio.current_task()
+
+        while self._running:
+            try:
+                # Get next message from main outbound queue
+                msg = await asyncio.wait_for(self.outbound.get(), timeout=1.0)
 
                 channel = msg.channel
 
@@ -138,6 +140,22 @@ class MessageBus:
             except Exception as e:
                 logger.error(f"Error in main dispatcher: {e}")
                 await asyncio.sleep(0.1) # Prevent tight loop on error
+                subscribers = self._outbound_subscribers.get(msg.channel, [])
+                for callback in subscribers:
+                    asyncio.create_task(self._safe_dispatch(callback, msg))
+            except asyncio.TimeoutError:
+                continue
+
+    async def _safe_dispatch(
+        self,
+        callback: Callable[[OutboundMessage], Awaitable[None]],
+        msg: OutboundMessage
+    ) -> None:
+        """Execute a subscriber callback and handle exceptions."""
+        try:
+            await callback(msg)
+        except Exception as e:
+            logger.error(f"Error dispatching to {msg.channel}: {e}")
     
     def stop(self) -> None:
         """Stop the dispatcher loop."""

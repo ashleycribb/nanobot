@@ -328,14 +328,8 @@ def gateway(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
 ):
     """Start the nanobot gateway."""
-    from nanobot.config.loader import load_config, get_data_dir
-    from nanobot.bus.queue import MessageBus
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.channels.manager import ChannelManager
-    from nanobot.session.manager import SessionManager
-    from nanobot.cron.service import CronService
-    from nanobot.cron.types import CronJob
-    from nanobot.heartbeat.service import HeartbeatService
+    from nanobot.config.loader import load_config
+    from nanobot.gateway import GatewayApp
     
     if verbose:
         import logging
@@ -344,72 +338,16 @@ def gateway(
     console.print(f"{__logo__} Starting nanobot gateway on port {port}...")
     
     config = load_config()
-    bus = MessageBus()
     provider = _make_provider(config)
-    session_manager = SessionManager(config.workspace_path)
     
-    # Create cron service first (callback set after agent creation)
-    cron_store_path = get_data_dir() / "cron" / "jobs.json"
-    cron = CronService(cron_store_path)
+    app = GatewayApp(config, provider)
     
-    # Create agent with cron service
-    agent = AgentLoop(
-        bus=bus,
-        provider=provider,
-        workspace=config.workspace_path,
-        model=config.agents.defaults.model,
-        temperature=config.agents.defaults.temperature,
-        max_tokens=config.agents.defaults.max_tokens,
-        max_iterations=config.agents.defaults.max_tool_iterations,
-        memory_window=config.agents.defaults.memory_window,
-        brave_api_key=config.tools.web.search.api_key or None,
-        exec_config=config.tools.exec,
-        cron_service=cron,
-        restrict_to_workspace=config.tools.restrict_to_workspace,
-        session_manager=session_manager,
-        mcp_servers=config.tools.mcp_servers,
-    )
-    
-    # Set cron callback (needs agent)
-    async def on_cron_job(job: CronJob) -> str | None:
-        """Execute a cron job through the agent."""
-        response = await agent.process_direct(
-            job.payload.message,
-            session_key=f"cron:{job.id}",
-            channel=job.payload.channel or "cli",
-            chat_id=job.payload.to or "direct",
-        )
-        if job.payload.deliver and job.payload.to:
-            from nanobot.bus.events import OutboundMessage
-            await bus.publish_outbound(OutboundMessage(
-                channel=job.payload.channel or "cli",
-                chat_id=job.payload.to,
-                content=response or ""
-            ))
-        return response
-    cron.on_job = on_cron_job
-    
-    # Create heartbeat service
-    async def on_heartbeat(prompt: str) -> str:
-        """Execute heartbeat through the agent."""
-        return await agent.process_direct(prompt, session_key="heartbeat")
-    
-    heartbeat = HeartbeatService(
-        workspace=config.workspace_path,
-        on_heartbeat=on_heartbeat,
-        interval_s=30 * 60,  # 30 minutes
-        enabled=True
-    )
-    
-    # Create channel manager
-    channels = ChannelManager(config, bus)
-    
-    if channels.enabled_channels:
-        console.print(f"[green]✓[/green] Channels enabled: {', '.join(channels.enabled_channels)}")
+    if app.channels.enabled_channels:
+        console.print(f"[green]✓[/green] Channels enabled: {', '.join(app.channels.enabled_channels)}")
     else:
         console.print("[yellow]Warning: No channels enabled[/yellow]")
     
-    cron_status = cron.status()
+    cron_status = app.cron.status()
     if cron_status["jobs"] > 0:
         console.print(f"[green]✓[/green] Cron: {cron_status['jobs']} scheduled jobs")
     
@@ -417,20 +355,11 @@ def gateway(
     
     async def run():
         try:
-            await cron.start()
-            await heartbeat.start()
-            await asyncio.gather(
-                agent.run(),
-                channels.start_all(),
-            )
+            await app.run()
         except KeyboardInterrupt:
             console.print("\nShutting down...")
         finally:
-            await agent.close_mcp()
-            heartbeat.stop()
-            cron.stop()
-            agent.stop()
-            await channels.stop_all()
+            await app.stop()
     
     asyncio.run(run())
 
@@ -440,6 +369,71 @@ def gateway(
 # ============================================================================
 # Agent Commands
 # ============================================================================
+
+
+def _get_thinking_context(logs: bool):
+    """Get the appropriate thinking context manager based on logs setting."""
+    if logs:
+        from contextlib import nullcontext
+        return nullcontext()
+    # Animated spinner is safe to use with prompt_toolkit input handling
+    return console.status("[dim]nanobot is thinking...[/dim]", spinner="dots")
+
+
+async def _run_single_message(agent_loop, message: str, session_id: str, markdown: bool, logs: bool):
+    """Run agent for a single message."""
+    try:
+        with _get_thinking_context(logs):
+            response = await agent_loop.process_direct(message, session_id)
+        _print_agent_response(response, render_markdown=markdown)
+    finally:
+        await agent_loop.close_mcp()
+
+
+async def _run_interactive_loop(agent_loop, session_id: str, markdown: bool, logs: bool):
+    """Run agent in interactive loop."""
+    try:
+        while True:
+            try:
+                _flush_pending_tty_input()
+                user_input = await _read_interactive_input_async()
+                command = user_input.strip()
+                if not command:
+                    continue
+
+                if _is_exit_command(command):
+                    _restore_terminal()
+                    console.print("\nGoodbye!")
+                    break
+
+                with _get_thinking_context(logs):
+                    response = await agent_loop.process_direct(user_input, session_id)
+                _print_agent_response(response, render_markdown=markdown)
+            except KeyboardInterrupt:
+                _restore_terminal()
+                console.print("\nGoodbye!")
+                break
+            except EOFError:
+                _restore_terminal()
+                console.print("\nGoodbye!")
+                break
+    finally:
+        await agent_loop.close_mcp()
+
+
+def _run_interactive_mode(agent_loop, session_id: str, markdown: bool, logs: bool):
+    """Setup and run interactive mode."""
+    _init_prompt_session()
+    console.print(f"{__logo__} Interactive mode (type [bold]exit[/bold] or [bold]Ctrl+C[/bold] to quit)\n")
+
+    def _exit_on_sigint(signum, frame):
+        _restore_terminal()
+        console.print("\nGoodbye!")
+        os._exit(0)
+
+    signal.signal(signal.SIGINT, _exit_on_sigint)
+
+    asyncio.run(_run_interactive_loop(agent_loop, session_id, markdown, logs))
 
 
 @app.command()
@@ -455,9 +449,9 @@ def agent(
     from nanobot.agent.loop import AgentLoop
     from nanobot.cron.service import CronService
     from loguru import logger
-    
+
     config = load_config()
-    
+
     bus = MessageBus()
     provider = _make_provider(config)
 
@@ -469,7 +463,7 @@ def agent(
         logger.enable("nanobot")
     else:
         logger.disable("nanobot")
-    
+
     agent_loop = AgentLoop(
         bus=bus,
         provider=provider,
@@ -485,66 +479,11 @@ def agent(
         restrict_to_workspace=config.tools.restrict_to_workspace,
         mcp_servers=config.tools.mcp_servers,
     )
-    
-    # Show spinner when logs are off (no output to miss); skip when logs are on
-    def _thinking_ctx():
-        if logs:
-            from contextlib import nullcontext
-            return nullcontext()
-        # Animated spinner is safe to use with prompt_toolkit input handling
-        return console.status("[dim]nanobot is thinking...[/dim]", spinner="dots")
 
     if message:
-        # Single message mode
-        async def run_once():
-            with _thinking_ctx():
-                response = await agent_loop.process_direct(message, session_id)
-            _print_agent_response(response, render_markdown=markdown)
-            await agent_loop.close_mcp()
-        
-        asyncio.run(run_once())
+        asyncio.run(_run_single_message(agent_loop, message, session_id, markdown, logs))
     else:
-        # Interactive mode
-        _init_prompt_session()
-        console.print(f"{__logo__} Interactive mode (type [bold]exit[/bold] or [bold]Ctrl+C[/bold] to quit)\n")
-
-        def _exit_on_sigint(signum, frame):
-            _restore_terminal()
-            console.print("\nGoodbye!")
-            os._exit(0)
-
-        signal.signal(signal.SIGINT, _exit_on_sigint)
-        
-        async def run_interactive():
-            try:
-                while True:
-                    try:
-                        _flush_pending_tty_input()
-                        user_input = await _read_interactive_input_async()
-                        command = user_input.strip()
-                        if not command:
-                            continue
-
-                        if _is_exit_command(command):
-                            _restore_terminal()
-                            console.print("\nGoodbye!")
-                            break
-                        
-                        with _thinking_ctx():
-                            response = await agent_loop.process_direct(user_input, session_id)
-                        _print_agent_response(response, render_markdown=markdown)
-                    except KeyboardInterrupt:
-                        _restore_terminal()
-                        console.print("\nGoodbye!")
-                        break
-                    except EOFError:
-                        _restore_terminal()
-                        console.print("\nGoodbye!")
-                        break
-            finally:
-                await agent_loop.close_mcp()
-        
-        asyncio.run(run_interactive())
+        _run_interactive_mode(agent_loop, session_id, markdown, logs)
 
 
 # ============================================================================
@@ -973,7 +912,7 @@ def _login_openai_codex() -> None:
         if not (token and token.access):
             console.print("[red]✗ Authentication failed[/red]")
             raise typer.Exit(1)
-        console.print(f"[green]✓ Authenticated with OpenAI Codex[/green]  [dim]{token.account_id}[/dim]")
+        console.print("[green]✓ Authenticated with OpenAI Codex[/green]")
     except ImportError:
         console.print("[red]oauth_cli_kit not installed. Run: pip install oauth-cli-kit[/red]")
         raise typer.Exit(1)
