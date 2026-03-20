@@ -103,6 +103,30 @@ class SessionManager:
         self._cache[key] = session
         return session
     
+    async def aget_or_create(self, key: str) -> Session:
+        """
+        Get an existing session or create a new one (async).
+
+        Args:
+            key: Session key (usually channel:chat_id).
+
+        Returns:
+            The session.
+        """
+        if key in self._cache:
+            return self._cache[key]
+
+        session = await asyncio.to_thread(self._load, key)
+        if session is None:
+            session = Session(key=key)
+
+        # Check cache again in case of race
+        if key in self._cache:
+            return self._cache[key]
+
+        self._cache[key] = session
+        return session
+
     def _load(self, key: str) -> Session | None:
         """Load a session from disk."""
         path = self._get_session_path(key)
@@ -148,47 +172,8 @@ class SessionManager:
             logger.warning(f"Failed to load session {key}: {e}")
             return None
     
-    def _write_to_disk(self, path: Path, metadata: dict[str, Any], messages: list[dict[str, Any]]) -> None:
-        """Write session data to disk (blocking)."""
-        with open(path, "w") as f:
-            f.write(json.dumps(metadata) + "\n")
-            for msg in messages:
-                f.write(json.dumps(msg) + "\n")
-
-    def save(self, session: Session) -> None:
-        """Save a session to disk."""
-        path = self._get_session_path(session.key)
-
-        metadata_line = {
-            "_type": "metadata",
-            "created_at": session.created_at.isoformat(),
-            "updated_at": session.updated_at.isoformat(),
-            "metadata": session.metadata,
-            "last_consolidated": session.last_consolidated
-        }
-        self._write_to_disk(path, metadata_line, session.messages)
-
-        self._cache[session.key] = session
-
-    async def asave(self, session: Session) -> None:
-        """Save a session to disk asynchronously."""
-        path = self._get_session_path(session.key)
-
-        metadata_line = {
-            "_type": "metadata",
-            "created_at": session.created_at.isoformat(),
-            "updated_at": session.updated_at.isoformat(),
-            "metadata": session.metadata,
-            "last_consolidated": session.last_consolidated
-        }
-
-        # Snapshot the messages to avoid mutation during write
-        messages_snapshot = list(session.messages)
-
-        await asyncio.to_thread(self._write_to_disk, path, metadata_line, messages_snapshot)
-
     async def save(self, session: Session) -> None:
-        """Save a session to disk (async)."""
+        """Save a session to disk asynchronously."""
         # Snapshot state in main thread to avoid concurrency issues during thread execution
         messages = list(session.messages)
         metadata = session.metadata.copy()
@@ -198,20 +183,24 @@ class SessionManager:
         path = self._get_session_path(session.key)
 
         def _write():
+            metadata_line = {
+                "_type": "metadata",
+                "created_at": created_at.isoformat(),
+                "updated_at": updated_at.isoformat(),
+                "metadata": metadata,
+                "last_consolidated": last_consolidated
+            }
+            lines = [json.dumps(metadata_line)]
+            lines.extend(json.dumps(msg) for msg in messages)
             with open(path, "w") as f:
-                metadata_line = {
-                    "_type": "metadata",
-                    "created_at": created_at.isoformat(),
-                    "updated_at": updated_at.isoformat(),
-                    "metadata": metadata,
-                    "last_consolidated": last_consolidated
-                }
-                f.write(json.dumps(metadata_line) + "\n")
-                for msg in messages:
-                    f.write(json.dumps(msg) + "\n")
+                f.write("\n".join(lines) + "\n")
 
         await asyncio.to_thread(_write)
         self._cache[session.key] = session
+
+    async def asave(self, session: Session) -> None:
+        """Alias for save() for backward compatibility."""
+        await self.save(session)
     
     def invalidate(self, key: str) -> None:
         """Remove a session from the in-memory cache."""
