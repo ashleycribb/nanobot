@@ -54,6 +54,7 @@ class ReadFileTool(Tool):
 
     async def execute(self, path: str, **kwargs: Any) -> str:
         try:
+            return await asyncio.to_thread(self._read_sync, path, self._allowed_dir)
             return await asyncio.to.thread(self._read_sync, path, self._allowed_dir)
         except PermissionError as e:
             return f"Error: {e}"
@@ -151,17 +152,19 @@ class EditFileTool(Tool):
             return f"Error: File not found: {path}"
 
         content = file_path.read_text(encoding="utf-8")
-
         if old_text not in content:
             return f"Error: old_text not found in file. Make sure it matches exactly."
 
-        # Count occurrences
         count = content.count(old_text)
         if count > 1:
             return f"Warning: old_text appears {count} times. Please provide more context to make it unique."
 
         new_content = content.replace(old_text, new_text, 1)
         file_path.write_text(new_content, encoding="utf-8")
+        return f"Successfully edited {path}"
+
+    async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
+        try:
 
         return f"Successfully edited {path}"
 

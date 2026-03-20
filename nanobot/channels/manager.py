@@ -293,6 +293,8 @@ class ChannelManager:
 
                 channel = self.channels.get(msg.channel)
                 if channel:
+                if msg.channel in self.channels:
+                    channel = self.channels[msg.channel]
                     asyncio.create_task(self._send_message_safe(channel, msg))
                     # Create a unique key for channel+chat
                     key = f"{msg.channel}:{msg.chat_id}"

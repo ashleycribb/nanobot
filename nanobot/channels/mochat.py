@@ -1,7 +1,5 @@
 """Mochat channel implementation using Socket.IO with HTTP polling fallback."""
 
-from __future__ import annotations
-
 import asyncio
 import json
 from collections import deque
@@ -18,6 +16,8 @@ from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import MochatConfig
 from nanobot.utils.helpers import get_data_path
 
+import importlib.util
+
 try:
     import socketio
     SOCKETIO_AVAILABLE = True
@@ -25,11 +25,7 @@ except ImportError:
     socketio = None
     SOCKETIO_AVAILABLE = False
 
-try:
-    import msgpack  # noqa: F401
-    MSGPACK_AVAILABLE = True
-except ImportError:
-    MSGPACK_AVAILABLE = False
+MSGPACK_AVAILABLE = importlib.util.find_spec("msgpack") is not None
 
 MAX_SEEN_MESSAGE_IDS = 2000
 CURSOR_SAVE_DEBOUNCE_S = 0.5
@@ -342,6 +338,34 @@ class MochatChannel(BaseChannel):
 
     # ---- websocket ---------------------------------------------------------
 
+    async def _on_socket_connect(self) -> None:
+        """Handle socket connection event."""
+        self._ws_connected, self._ws_ready = True, False
+        logger.info("Mochat websocket connected")
+        subscribed = await self._subscribe_all()
+        self._ws_ready = subscribed
+        await (self._stop_fallback_workers() if subscribed else self._ensure_fallback_workers())
+
+    async def _on_socket_disconnect(self) -> None:
+        """Handle socket disconnection event."""
+        if not self._running:
+            return
+        self._ws_connected = self._ws_ready = False
+        logger.warning("Mochat websocket disconnected")
+        await self._ensure_fallback_workers()
+
+    async def _on_socket_connect_error(self, data: Any) -> None:
+        """Handle socket connection error."""
+        logger.error(f"Mochat websocket connect error: {data}")
+
+    async def _on_socket_session_events(self, payload: dict[str, Any]) -> None:
+        """Handle session events."""
+        await self._handle_watch_payload(payload, "session")
+
+    async def _on_socket_panel_events(self, payload: dict[str, Any]) -> None:
+        """Handle panel events."""
+        await self._handle_watch_payload(payload, "panel")
+
     async def _start_socket_client(self) -> bool:
         if not SOCKETIO_AVAILABLE:
             logger.warning("python-socketio not installed, Mochat using polling fallback")
@@ -362,33 +386,11 @@ class MochatChannel(BaseChannel):
             logger=False, engineio_logger=False, serializer=serializer,
         )
 
-        @client.event
-        async def connect() -> None:
-            self._ws_connected, self._ws_ready = True, False
-            logger.info("Mochat websocket connected")
-            subscribed = await self._subscribe_all()
-            self._ws_ready = subscribed
-            await (self._stop_fallback_workers() if subscribed else self._ensure_fallback_workers())
-
-        @client.event
-        async def disconnect() -> None:
-            if not self._running:
-                return
-            self._ws_connected = self._ws_ready = False
-            logger.warning("Mochat websocket disconnected")
-            await self._ensure_fallback_workers()
-
-        @client.event
-        async def connect_error(data: Any) -> None:
-            logger.error(f"Mochat websocket connect error: {data}")
-
-        @client.on("claw.session.events")
-        async def on_session_events(payload: dict[str, Any]) -> None:
-            await self._handle_watch_payload(payload, "session")
-
-        @client.on("claw.panel.events")
-        async def on_panel_events(payload: dict[str, Any]) -> None:
-            await self._handle_watch_payload(payload, "panel")
+        client.on("connect", self._on_socket_connect)
+        client.on("disconnect", self._on_socket_disconnect)
+        client.on("connect_error", self._on_socket_connect_error)
+        client.on("claw.session.events", self._on_socket_session_events)
+        client.on("claw.panel.events", self._on_socket_panel_events)
 
         for ev in ("notify:chat.inbox.append", "notify:chat.message.add",
                     "notify:chat.message.update", "notify:chat.message.recall",

@@ -1,4 +1,24 @@
 import pytest
+from pathlib import Path
+from nanobot.utils.helpers import get_sessions_path
+
+def test_get_sessions_path(tmp_path, monkeypatch):
+    """Test get_sessions_path returns the correct path and ensures directory exists."""
+    # Mock Path.home() to return the temporary directory
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    # Call the function
+    sessions_path = get_sessions_path()
+
+    # Expected path is ~/.nanobot/sessions, where ~ is tmp_path
+    expected_path = tmp_path / ".nanobot" / "sessions"
+
+    # Assert the returned path matches the expected path
+    assert sessions_path == expected_path
+
+    # Assert the directory was actually created
+    assert sessions_path.exists()
+    assert sessions_path.is_dir()
 from nanobot.utils.helpers import safe_filename
 
 def test_safe_filename_valid():
@@ -153,11 +173,11 @@ def test_truncate_string_suffix_only():
 def test_truncate_string_very_short_max_len():
     """
     Test behavior when max_len is very short.
-    Note: Current implementation may produce string longer than max_len
-    if max_len < len(suffix). We test the current behavior.
     """
     text = "Hello"
     assert truncate_string(text, max_len=2, suffix="...") == ".."
+    # max_len=2, suffix="..." (len 3). max_len < len(suffix), so return text[:2] -> "He"
+    assert truncate_string(text, max_len=2, suffix="...") == "He"
 
 
 def test_truncate_string_default_args():
@@ -202,13 +222,14 @@ def test_truncate_string_custom_suffix():
 def test_truncate_string_max_len_smaller_than_suffix():
     """
     Test edge case where max_len is smaller than the length of the suffix.
-    The function does not strictly enforce max_len in this case and returns
-    a string longer than max_len due to negative slicing.
     """
     s = "hello world"
     # max_len (2) < len("...") (3)
     result = truncate_string(s, max_len=2, suffix="...")
     assert result == ".."
+    # should return s[:2] -> "he"
+    result = truncate_string(s, max_len=2, suffix="...")
+    assert result == "he"
     assert len(result) == 2
 
 def test_truncate_string_default_args():
