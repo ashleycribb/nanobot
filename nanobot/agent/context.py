@@ -43,15 +43,12 @@ class ContextBuilder:
         parts.append(self._get_identity())
         
         # Bootstrap files
-        bootstrap = await self._load_bootstrap_files()
+        bootstrap = self._load_bootstrap_files()
         if bootstrap:
             parts.append(bootstrap)
         
         # Memory context
         memory = await self.memory.get_memory_context()
-        memory = await asyncio.to_thread(self.memory.get_memory_context)
-        memory = await self.memory.get_memory_context()
-        memory = await self.memory.aget_memory_context()
         if memory:
             parts.append(f"# Memory\n\n{memory}")
         
@@ -119,8 +116,6 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
         return await asyncio.to_thread(self._load_bootstrap_files_sync)
 
     def _load_bootstrap_files_sync(self) -> str:
-        """Synchronous implementation of bootstrap file loading."""
-    def _load_bootstrap_files(self) -> str:
         """Load all bootstrap files from workspace (with mtime caching)."""
         parts = []
         
@@ -214,16 +209,8 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
             if result:
                 mime, b64 = result
                 images.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
-        def _sync_process_image(path_str: str) -> dict[str, str] | None:
-            p = Path(path_str)
-            mime, _ = mimetypes.guess_type(path_str)
 
             if not p.is_file() or not mime or not mime.startswith("image/"):
-                continue
-
-            content = await asyncio.to_thread(p.read_bytes)
-            b64 = base64.b64encode(content).decode()
-            images.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
                 return None
 
             content = p.read_bytes()
@@ -245,6 +232,7 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
         
         if not images:
             return text
+
         return images + [{"type": "text", "text": text}]
     
     def add_tool_result(
