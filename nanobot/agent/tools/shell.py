@@ -12,7 +12,7 @@ from nanobot.agent.tools.base import Tool
 
 class ExecTool(Tool):
     """Tool to execute shell commands."""
-    
+
     def __init__(
         self,
         timeout: int = 60,
@@ -24,54 +24,48 @@ class ExecTool(Tool):
         self.timeout = timeout
         self.working_dir = working_dir
         self.deny_patterns = deny_patterns or [
-            r"\brm\s+-[rf]{1,2}\b",          # rm -r, rm -rf, rm -fr
-            r"\bdel\s+/[fq]\b",              # del /f, del /q
-            r"\brmdir\s+/s\b",               # rmdir /s
-            r"\b(format|mkfs|diskpart)\b",   # disk operations
-            r"\bdd\s+if=",                   # dd
-            r">\s*/dev/sd",                  # write to disk
+            r"\brm\s+-[rf]{1,2}\b",  # rm -r, rm -rf, rm -fr
+            r"\bdel\s+/[fq]\b",  # del /f, del /q
+            r"\brmdir\s+/s\b",  # rmdir /s
+            r"\b(format|mkfs|diskpart)\b",  # disk operations
+            r"\bdd\s+if=",  # dd
+            r">\s*/dev/sd",  # write to disk
             r"\b(shutdown|reboot|poweroff)\b",  # system power
-            r":\(\)\s*\{.*\};\s*:",          # fork bomb
+            r":\(\)\s*\{.*\};\s*:",  # fork bomb
         ]
         self.allow_patterns = allow_patterns or []
         self.restrict_to_workspace = restrict_to_workspace
-    
+
     @property
     def name(self) -> str:
         return "exec"
-    
+
     @property
     def description(self) -> str:
         return "Execute a command and return its output. Note: Shell features like pipes, redirection, and chaining are not supported."
-    
+
     @property
     def parameters(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "The shell command to execute"
-                },
+                "command": {"type": "string", "description": "The shell command to execute"},
                 "working_dir": {
                     "type": "string",
-                    "description": "Optional working directory for the command"
-                }
+                    "description": "Optional working directory for the command",
+                },
             },
-            "required": ["command"]
+            "required": ["command"],
         }
-    
+
     async def execute(self, command: str, working_dir: str | None = None, **kwargs: Any) -> str:
         cwd = working_dir or self.working_dir or os.getcwd()
         guard_error = self._guard_command(command, cwd)
         if guard_error:
             return guard_error
+
         
         try:
-            try:
-                args = shlex.split(command)
-            except ValueError as e:
-                return f"Error parsing command arguments: {str(e)}"
             # Parse command string into list of arguments to avoid shell injection
             try:
                 args = shlex.split(command)
@@ -81,62 +75,66 @@ class ExecTool(Tool):
             if not args:
                 return "Error: Empty command"
 
-            process = await asyncio.create_subprocess_exec(
-                *args,
-            program = args[0]
-            arguments = args[1:]
+            guard_error = self._guard_args(args, cwd)
+            if guard_error:
+                return guard_error
 
             process = await asyncio.create_subprocess_exec(
-                program,
-                *arguments,
                 args[0],
                 *args[1:],
+                *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
             )
-            
+
             try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(),
-                    timeout=self.timeout
-                )
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=self.timeout)
             except asyncio.TimeoutError:
                 process.kill()
                 return f"Error: Command timed out after {self.timeout} seconds"
-            
+
             output_parts = []
-            
+
             if stdout:
                 output_parts.append(stdout.decode("utf-8", errors="replace"))
-            
+
             if stderr:
                 stderr_text = stderr.decode("utf-8", errors="replace")
                 if stderr_text.strip():
                     output_parts.append(f"STDERR:\n{stderr_text}")
-            
+
             if process.returncode != 0:
                 output_parts.append(f"\nExit code: {process.returncode}")
-            
+
             result = "\n".join(output_parts) if output_parts else "(no output)"
-            
+
             # Truncate very long output
             max_len = 10000
             if len(result) > max_len:
                 result = result[:max_len] + f"\n... (truncated, {len(result) - max_len} more chars)"
-            
+
             return result
-            
+
         except FileNotFoundError:
             # Handle case where executable is not found
-            return f"Error: Command not found: {args[0] if 'args' in locals() and args else command}"
+            return (
+                f"Error: Command not found: {args[0] if 'args' in locals() and args else command}"
+            )
         except Exception as e:
             return f"Error executing command: {str(e)}"
 
-    def _guard_command(self, command: str, cwd: str) -> str | None:
+    def _guard_args(self, args: list[str], cwd: str) -> str | None:
         """Best-effort safety guard for potentially destructive commands."""
-        cmd = command.strip()
-        lower = cmd.lower()
+        # Join arguments into a normalized command string for regex checks
+        normalized_cmd = shlex.join(args)
+
+        # We join the parsed arguments back together with a single space
+        # so that our regex patterns can still work, but without needing
+        # to handle tricky shell escapes, quotes, etc that shlex stripped out.
+        # It's an approximation, but better than scanning the raw string.
+        normalized_cmd = " ".join(args)
+        lower = normalized_cmd.lower()
 
         for pattern in self.deny_patterns:
             if re.search(pattern, lower):
@@ -147,23 +145,30 @@ class ExecTool(Tool):
                 return "Error: Command blocked by safety guard (not in allowlist)"
 
         if self.restrict_to_workspace:
-            if "..\\" in cmd or "../" in cmd:
-                return "Error: Command blocked by safety guard (path traversal detected)"
-
             cwd_path = Path(cwd).resolve()
 
-            win_paths = re.findall(r"[A-Za-z]:\\[^\\\"']+", cmd)
-            # Only match absolute paths — avoid false positives on relative
-            # paths like ".venv/bin/python" where "/bin/python" would be
-            # incorrectly extracted by the old pattern.
-            posix_paths = re.findall(r"(?:^|[\s|>])(/[^\s\"'>]+)", cmd)
+            for arg in args:
+                if ".." in arg:
+                    return "Error: Command blocked by safety guard (path traversal detected)"
 
-            for raw in win_paths + posix_paths:
                 try:
-                    p = Path(raw.strip()).resolve()
+                    p = Path(arg)
+                    if p.is_absolute():
+                        resolved = p.resolve()
+                        if cwd_path not in resolved.parents and resolved != cwd_path:
+                if "..\\" in arg or "../" in arg:
+                    return "Error: Command blocked by safety guard (path traversal detected)"
+
+                try:
+                    # Treat argument as a potential path. If it resolves outside the workspace, block it.
+                    # We check if it looks like an absolute path to avoid resolving every single random argument.
+                    # On windows absolute paths might start with C:\ or similar.
+                    # On linux with /
+                    if re.match(r"^([A-Za-z]:\\|/)", arg):
+                        p = Path(arg).resolve()
+                        if p.is_absolute() and cwd_path not in p.parents and p != cwd_path:
+                            return "Error: Command blocked by safety guard (path outside working dir)"
                 except Exception:
                     continue
-                if p.is_absolute() and cwd_path not in p.parents and p != cwd_path:
-                    return "Error: Command blocked by safety guard (path outside working dir)"
 
         return None

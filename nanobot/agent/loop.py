@@ -20,7 +20,7 @@ from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.cron import CronTool
-from nanobot.agent.memory import MemoryStore
+from nanobot.agent.memory import MemoryService
 from nanobot.agent.subagent import SubagentManager
 from nanobot.session.manager import Session, SessionManager
 
@@ -82,6 +82,12 @@ class AgentLoop:
             brave_api_key=brave_api_key,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
+        )
+        self.memory_service = MemoryService(
+            workspace=workspace,
+            provider=provider,
+            model=self.model,
+            memory_window=memory_window
         )
         
         self._running = False
@@ -278,7 +284,7 @@ class AgentLoop:
             async def _consolidate_and_cleanup():
                 temp_session = Session(key=session.key)
                 temp_session.messages = messages_to_archive
-                await self._consolidate_memory(temp_session, archive_all=True)
+                await self.memory_service.consolidate(temp_session, archive_all=True)
 
             asyncio.create_task(_consolidate_and_cleanup())
             return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
@@ -288,7 +294,7 @@ class AgentLoop:
                                   content="🐈 nanobot commands:\n/new — Start a new conversation\n/help — Show available commands")
         
         if len(session.messages) > self.memory_window:
-            asyncio.create_task(self._consolidate_memory(session))
+            asyncio.create_task(self.memory_service.consolidate(session))
 
         self._set_tool_context(msg.channel, msg.chat_id)
         initial_messages = await self.context.build_messages(

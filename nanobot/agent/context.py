@@ -43,15 +43,12 @@ class ContextBuilder:
         parts.append(self._get_identity())
         
         # Bootstrap files
-        bootstrap = await self._load_bootstrap_files()
+        bootstrap = self._load_bootstrap_files()
         if bootstrap:
             parts.append(bootstrap)
         
         # Memory context
         memory = await self.memory.get_memory_context()
-        memory = await asyncio.to_thread(self.memory.get_memory_context)
-        memory = await self.memory.get_memory_context()
-        memory = await self.memory.aget_memory_context()
         if memory:
             parts.append(f"# Memory\n\n{memory}")
         
@@ -219,11 +216,6 @@ To recall past events, grep {workspace_path}/memory/HISTORY.md"""
             mime, _ = mimetypes.guess_type(path_str)
 
             if not p.is_file() or not mime or not mime.startswith("image/"):
-                continue
-
-            content = await asyncio.to_thread(p.read_bytes)
-            b64 = base64.b64encode(content).decode()
-            images.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
                 return None
 
             content = p.read_bytes()

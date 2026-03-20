@@ -1,4 +1,24 @@
 import pytest
+from pathlib import Path
+from nanobot.utils.helpers import get_sessions_path
+
+def test_get_sessions_path(tmp_path, monkeypatch):
+    """Test get_sessions_path returns the correct path and ensures directory exists."""
+    # Mock Path.home() to return the temporary directory
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    # Call the function
+    sessions_path = get_sessions_path()
+
+    # Expected path is ~/.nanobot/sessions, where ~ is tmp_path
+    expected_path = tmp_path / ".nanobot" / "sessions"
+
+    # Assert the returned path matches the expected path
+    assert sessions_path == expected_path
+
+    # Assert the directory was actually created
+    assert sessions_path.exists()
+    assert sessions_path.is_dir()
 from nanobot.utils.helpers import safe_filename
 
 def test_safe_filename_valid():
@@ -91,6 +111,14 @@ def test_get_workspace_path_none(monkeypatch, tmp_path):
 
     expected_path = tmp_path / ".nanobot" / "workspace"
     assert not expected_path.exists()
+def test_truncate_string_very_short_max_len():
+    """
+    Test behavior when max_len is very short.
+    """
+    text = "Hello"
+    assert truncate_string(text, max_len=2, suffix="...") == ".."
+    # max_len=2, suffix="..." (len 3). max_len < len(suffix), so return text[:2] -> "He"
+    assert truncate_string(text, max_len=2, suffix="...") == "He"
 
     result = get_workspace_path(None)
 
@@ -98,3 +126,53 @@ def test_get_workspace_path_none(monkeypatch, tmp_path):
     assert result.exists()
     assert result.is_dir()
 
+from nanobot.utils.helpers import truncate_string
+
+def test_truncate_string_shorter_than_max_len():
+    """Test that a string shorter than max_len is returned unchanged."""
+    s = "hello"
+    assert truncate_string(s, max_len=10) == "hello"
+
+def test_truncate_string_equal_to_max_len():
+    """Test that a string equal to max_len is returned unchanged."""
+    s = "hello"
+    assert truncate_string(s, max_len=5) == "hello"
+
+def test_truncate_string_longer_than_max_len():
+    """Test that a string longer than max_len is truncated and suffix is appended."""
+    s = "hello world"
+    result = truncate_string(s, max_len=8, suffix="...")
+    assert result == "hello..."
+    assert len(result) == 8
+
+def test_truncate_string_empty():
+    """Test that an empty string is handled correctly."""
+    assert truncate_string("", max_len=10) == ""
+
+def test_truncate_string_custom_suffix():
+    """Test that a custom suffix works correctly."""
+    s = "hello world"
+    result = truncate_string(s, max_len=8, suffix="!!")
+    assert result == "hello !!"
+    assert len(result) == 8
+
+def test_truncate_string_max_len_smaller_than_suffix():
+    """
+    Test edge case where max_len is smaller than the length of the suffix.
+    """
+    s = "hello world"
+    # max_len (2) < len("...") (3)
+    result = truncate_string(s, max_len=2, suffix="...")
+    assert result == ".."
+    # should return s[:2] -> "he"
+    result = truncate_string(s, max_len=2, suffix="...")
+    assert result == "he"
+    assert len(result) == 2
+
+def test_truncate_string_default_args():
+    """Test truncate_string with default arguments."""
+    s = "a" * 150
+    result = truncate_string(s)
+    assert len(result) == 100
+    assert result.endswith("...")
+    assert result.startswith("a" * 97)
