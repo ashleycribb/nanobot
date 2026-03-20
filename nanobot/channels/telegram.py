@@ -175,6 +175,17 @@ class TelegramChannel(BaseChannel):
                 }.get(media_type, self._app.bot.send_document)
                 param = "photo" if media_type == "photo" else media_type if media_type in ("voice", "audio") else "document"
 
+                def read_media():
+                    with open(media_path, 'rb') as f:
+                        return f.read()
+
+                # Use to_thread to read the file into memory without blocking the event loop
+                file_content = await asyncio.to_thread(read_media)
+
+                f_io = io.BytesIO(file_content)
+                f_io.name = media_path  # Important for telegram bot to recognize file extension
+
+                await sender(chat_id=chat_id, **{param: f_io})
                 # Pass the path directly; python-telegram-bot handles async file reading
                 await sender(chat_id=chat_id, **{param: media_path})
             except Exception as e:
