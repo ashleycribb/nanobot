@@ -110,6 +110,9 @@ class WriteFileTool(Tool):
             "required": ["path", "content"]
         }
 
+    @staticmethod
+    def _write_sync(path: str, content: str, allowed_dir: Path | None) -> str:
+        file_path = _resolve_path(path, allowed_dir)
     def _write_sync(self, file_path: Path, content: str) -> str:
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content, encoding="utf-8")
@@ -190,6 +193,9 @@ class EditFileTool(Tool):
 
     async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
         try:
+            return await asyncio.to_thread(self._edit_sync, path, old_text, new_text, self._allowed_dir)
+        except PermissionError as e:
+            return f"Error: {e}"
             return await asyncio.to_thread(self._edit_file, path, old_text, new_text)
         except Exception as e:
             return f"Error editing file: {str(e)}"
@@ -273,5 +279,7 @@ class ListDirTool(Tool):
     async def execute(self, path: str, **kwargs: Any) -> str:
         try:
             return await asyncio.to_thread(self._list_sync, path, self._allowed_dir)
+        except PermissionError as e:
+            return f"Error: {e}"
         except Exception as e:
             return f"Error: {str(e)}"
