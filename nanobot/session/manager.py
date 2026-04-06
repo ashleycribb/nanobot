@@ -72,6 +72,7 @@ class SessionManager:
         self.sessions_dir = ensure_dir(self.workspace / "sessions")
         self.legacy_sessions_dir = Path.home() / ".nanobot" / "sessions"
         self._cache: dict[str, Session] = {}
+        self._metadata_cache: dict[str, dict[str, Any]] = {}
     
     def _get_session_path(self, key: str) -> Path:
         """Get the file path for a session."""
@@ -161,13 +162,22 @@ class SessionManager:
                     else:
                         messages.append(data)
 
-            return Session(
+            session = Session(
                 key=key,
                 messages=messages,
                 created_at=created_at or datetime.now(),
                 metadata=metadata,
                 last_consolidated=last_consolidated
             )
+            # Update metadata cache
+            self._metadata_cache[key] = {
+                "key": key,
+                "created_at": session.created_at.isoformat(),
+                "updated_at": session.updated_at.isoformat(),
+                "path": str(path),
+                "mtime": path.stat().st_mtime
+            }
+            return session
         except Exception as e:
             logger.warning(f"Failed to load session {key}: {e}")
             return None
@@ -198,6 +208,18 @@ class SessionManager:
         await asyncio.to_thread(_write)
         self._cache[session.key] = session
 
+        # Update metadata cache with new mtime after write
+        try:
+            self._metadata_cache[session.key] = {
+                "key": session.key,
+                "created_at": created_at.isoformat(),
+                "updated_at": updated_at.isoformat(),
+                "path": str(path),
+                "mtime": path.stat().st_mtime
+            }
+        except Exception:
+            pass
+
     async def asave(self, session: Session) -> None:
         """Alias for save() for backward compatibility."""
         await self.save(session)
@@ -217,19 +239,49 @@ class SessionManager:
         
         for path in self.sessions_dir.glob("*.jsonl"):
             try:
-                # Read just the metadata line
+                key = path.stem.replace("_", ":")
+                mtime = path.stat().st_mtime
+
+                # Check cache first
+                if key in self._metadata_cache:
+                    cached = self._metadata_cache[key]
+                    if cached.get("mtime") == mtime:
+                        sessions.append({
+                            "key": key,
+                            "created_at": cached.get("created_at"),
+                            "updated_at": cached.get("updated_at"),
+                            "path": cached.get("path")
+                        })
+                        continue
+
+                # Cache miss or stale: read just the metadata line
                 with open(path) as f:
                     first_line = f.readline().strip()
                     if first_line:
                         data = json.loads(first_line)
                         if data.get("_type") == "metadata":
-                            sessions.append({
-                                "key": path.stem.replace("_", ":"),
+                            session_info = {
+                                "key": key,
                                 "created_at": data.get("created_at"),
                                 "updated_at": data.get("updated_at"),
                                 "path": str(path)
-                            })
+                            }
+                            sessions.append(session_info)
+                            # Update cache
+                            self._metadata_cache[key] = {
+                                **session_info,
+                                "mtime": mtime
+                            }
             except Exception:
                 continue
         
         return sorted(sessions, key=lambda x: x.get("updated_at", ""), reverse=True)
+
+    async def alist_sessions(self) -> list[dict[str, Any]]:
+        """
+        List all sessions asynchronously.
+
+        Returns:
+            List of session info dicts.
+        """
+        return await asyncio.to_thread(self.list_sessions)
