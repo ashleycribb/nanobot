@@ -4,7 +4,7 @@ from typing import Any
 
 from nanobot.agent.tools.base import Tool
 from nanobot.cron.service import CronService
-from nanobot.cron.types import CronSchedule
+from nanobot.cron.types import CronPayload, CronSchedule
 
 
 class CronTool(Tool):
@@ -124,10 +124,13 @@ class CronTool(Tool):
         job = self._cron.add_job(
             name=message[:30],
             schedule=schedule,
-            message=message,
-            deliver=True,
-            channel=self._channel,
-            to=self._chat_id,
+            payload=CronPayload(
+                kind="agent_turn",
+                message=message,
+                deliver=True,
+                channel=self._channel,
+                to=self._chat_id,
+            ),
             delete_after_run=delete_after,
         )
         return f"Created job '{job.name}' (id: {job.id})"

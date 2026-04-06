@@ -14,10 +14,13 @@ def test_cron_serialization_roundtrip():
         job = service.add_job(
             name="test_job",
             schedule=schedule,
-            message="hello",
-            deliver=True,
-            channel="slack",
-            to="user1",
+            payload=CronPayload(
+                kind="agent_turn",
+                message="hello",
+                deliver=True,
+                channel="slack",
+                to="user1",
+            ),
             delete_after_run=False
         )
 

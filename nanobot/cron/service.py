@@ -238,10 +238,7 @@ class CronService:
         self,
         name: str,
         schedule: CronSchedule,
-        message: str,
-        deliver: bool = False,
-        channel: str | None = None,
-        to: str | None = None,
+        payload: CronPayload,
         delete_after_run: bool = False,
     ) -> CronJob:
         """Add a new job."""
@@ -253,13 +250,7 @@ class CronService:
             name=name,
             enabled=True,
             schedule=schedule,
-            payload=CronPayload(
-                kind="agent_turn",
-                message=message,
-                deliver=deliver,
-                channel=channel,
-                to=to,
-            ),
+            payload=payload,
             state=CronJobState(next_run_at_ms=_compute_next_run(schedule, now)),
             created_at_ms=now,
             updated_at_ms=now,
@@ -287,13 +278,6 @@ class CronService:
 
         return removed
 
-    def _update_job(self, job_id: str, mutator: Callable[[CronJob], None]) -> CronJob | None:
-        """Update a job safely."""
-        store = self._load_store()
-        for job in store.jobs:
-            if job.id == job_id:
-                mutator(job)
-    
     def _update_job(self, job_id: str, modifier: Callable[[CronJob], None]) -> CronJob | None:
         """Helper to update a job safely."""
         store = self._load_store()
@@ -308,17 +292,12 @@ class CronService:
 
     def enable_job(self, job_id: str, enabled: bool = True) -> CronJob | None:
         """Enable or disable a job."""
-        def update(job: CronJob):
-            job.enabled = enabled
-            job.updated_at_ms = _now_ms()
         def modifier(job: CronJob):
             job.enabled = enabled
             if enabled:
                 job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
             else:
                 job.state.next_run_at_ms = None
-
-        return self._update_job(job_id, update)
 
         return self._update_job(job_id, modifier)
     

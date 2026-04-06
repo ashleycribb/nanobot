@@ -76,7 +76,7 @@ def cron_add(
     """Add a scheduled job."""
     from nanobot.config.loader import get_data_dir
     from nanobot.cron.service import CronService
-    from nanobot.cron.types import CronSchedule
+    from nanobot.cron.types import CronPayload, CronSchedule
 
     if tz and not cron_expr:
         console.print("[red]Error: --tz can only be used with --cron[/red]")
@@ -101,10 +101,13 @@ def cron_add(
     job = service.add_job(
         name=name,
         schedule=schedule,
-        message=message,
-        deliver=deliver,
-        to=to,
-        channel=channel,
+        payload=CronPayload(
+            kind="agent_turn",
+            message=message,
+            deliver=deliver,
+            channel=channel,
+            to=to,
+        ),
     )
 
     console.print(f"[green]✓[/green] Added job '{job.name}' ({job.id})")
