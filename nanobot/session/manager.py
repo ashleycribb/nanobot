@@ -233,3 +233,12 @@ class SessionManager:
                 continue
         
         return sorted(sessions, key=lambda x: x.get("updated_at", ""), reverse=True)
+
+    async def alist_sessions(self) -> list[dict[str, Any]]:
+        """
+        List all sessions (async).
+
+        Returns:
+            List of session info dicts.
+        """
+        return await asyncio.to_thread(self.list_sessions)
