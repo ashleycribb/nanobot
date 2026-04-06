@@ -200,28 +200,37 @@ class DiscordChannel(BaseChannel):
         media_paths: list[str] = []
         media_dir = Path.home() / ".nanobot" / "media"
 
-        for attachment in payload.get("attachments") or []:
+        async def download_attachment(attachment: dict[str, Any]) -> tuple[str | None, str | None]:
             url = attachment.get("url")
             filename = attachment.get("filename") or "attachment"
             size = attachment.get("size") or 0
             if not url or not self._http:
-                continue
+                return None, None
+
             if size and size > MAX_ATTACHMENT_BYTES:
-                content_parts.append(f"[attachment: {filename} - too large]")
-                continue
+                return None, f"[attachment: {filename} - too large]"
+
             try:
-                media_dir.mkdir(parents=True, exist_ok=True)
                 file_path = (
                     media_dir / f"{attachment.get('id', 'file')}_{filename.replace('/', '_')}"
                 )
                 resp = await self._http.get(url)
                 resp.raise_for_status()
                 await asyncio.to_thread(file_path.write_bytes, resp.content)
-                media_paths.append(str(file_path))
-                content_parts.append(f"[attachment: {file_path}]")
+                return str(file_path), f"[attachment: {file_path}]"
             except Exception as e:
                 logger.warning(f"Failed to download Discord attachment: {e}")
-                content_parts.append(f"[attachment: {filename} - download failed]")
+                return None, f"[attachment: {filename} - download failed]"
+
+        attachments = payload.get("attachments") or []
+        if attachments:
+            media_dir.mkdir(parents=True, exist_ok=True)
+            results = await asyncio.gather(*(download_attachment(a) for a in attachments))
+            for m_path, c_part in results:
+                if m_path:
+                    media_paths.append(m_path)
+                if c_part:
+                    content_parts.append(c_part)
 
         reply_to = (payload.get("referenced_message") or {}).get("id")
 
