@@ -1,6 +1,7 @@
 """Heartbeat service - periodic agent wake-up to check for tasks."""
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
@@ -9,13 +10,13 @@ from loguru import logger
 # Default interval: 30 minutes
 DEFAULT_HEARTBEAT_INTERVAL_S = 30 * 60
 
-# The prompt sent to agent during heartbeat
-HEARTBEAT_PROMPT = """Read HEARTBEAT.md in your workspace (if it exists).
-Follow any instructions or tasks listed there.
-If nothing needs attention, reply with just: HEARTBEAT_OK"""
-
 # Token that indicates "nothing to do"
-HEARTBEAT_OK_TOKEN = "HEARTBEAT_OK"
+HEARTBEAT_OK_TOKEN = os.environ.get("NANOBOT_HEARTBEAT_OK_TOKEN", "HEARTBEAT_OK")
+
+# The prompt sent to agent during heartbeat
+HEARTBEAT_PROMPT = f"""Read HEARTBEAT.md in your workspace (if it exists).
+Follow any instructions or tasks listed there.
+If nothing needs attention, reply with just: {HEARTBEAT_OK_TOKEN}"""
 
 
 def _is_heartbeat_empty(content: str | None) -> bool:
