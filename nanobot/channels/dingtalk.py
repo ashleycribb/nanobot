@@ -1,9 +1,10 @@
 """DingTalk/DingDing channel implementation using Stream Mode."""
 
 import asyncio
+import importlib.util
 import json
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 import httpx
@@ -13,74 +14,69 @@ from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import DingTalkConfig
 
-try:
+if TYPE_CHECKING:
     from dingtalk_stream import (
-        DingTalkStreamClient,
-        Credential,
         CallbackHandler,
         CallbackMessage,
-        AckMessage,
     )
+
+DINGTALK_AVAILABLE = importlib.util.find_spec("dingtalk_stream") is not None
+
+
+def _make_handler_class():
+    from dingtalk_stream import CallbackHandler, CallbackMessage, AckMessage
     from dingtalk_stream.chatbot import ChatbotMessage
 
-    DINGTALK_AVAILABLE = True
-except ImportError:
-    DINGTALK_AVAILABLE = False
-    # Fallback so class definitions don't crash at module level
-    CallbackHandler = object  # type: ignore[assignment,misc]
-    CallbackMessage = None  # type: ignore[assignment,misc]
-    AckMessage = None  # type: ignore[assignment,misc]
-    ChatbotMessage = None  # type: ignore[assignment,misc]
+    class NanobotDingTalkHandler(CallbackHandler):
+        """
+        Standard DingTalk Stream SDK Callback Handler.
+        Parses incoming messages and forwards them to the Nanobot channel.
+        """
 
+        def __init__(self, channel: "DingTalkChannel"):
+            super().__init__()
+            self.channel = channel
 
-class NanobotDingTalkHandler(CallbackHandler):
-    """
-    Standard DingTalk Stream SDK Callback Handler.
-    Parses incoming messages and forwards them to the Nanobot channel.
-    """
+        async def process(self, message: CallbackMessage):
+            """Process incoming stream message."""
+            try:
+                # Parse using SDK's ChatbotMessage for robust handling
+                chatbot_msg = ChatbotMessage.from_dict(message.data)
 
-    def __init__(self, channel: "DingTalkChannel"):
-        super().__init__()
-        self.channel = channel
+                # Extract text content; fall back to raw dict if SDK object is empty
+                content = ""
+                if chatbot_msg.text:
+                    content = chatbot_msg.text.content.strip()
+                if not content:
+                    content = message.data.get("text", {}).get("content", "").strip()
 
-    async def process(self, message: CallbackMessage):
-        """Process incoming stream message."""
-        try:
-            # Parse using SDK's ChatbotMessage for robust handling
-            chatbot_msg = ChatbotMessage.from_dict(message.data)
+                if not content:
+                    logger.warning(
+                        f"Received empty or unsupported message type: {chatbot_msg.message_type}"
+                    )
+                    return AckMessage.STATUS_OK, "OK"
 
-            # Extract text content; fall back to raw dict if SDK object is empty
-            content = ""
-            if chatbot_msg.text:
-                content = chatbot_msg.text.content.strip()
-            if not content:
-                content = message.data.get("text", {}).get("content", "").strip()
+                sender_id = chatbot_msg.sender_staff_id or chatbot_msg.sender_id
+                sender_name = chatbot_msg.sender_nick or "Unknown"
 
-            if not content:
-                logger.warning(
-                    f"Received empty or unsupported message type: {chatbot_msg.message_type}"
+                logger.info(f"Received DingTalk message from {sender_name} ({sender_id}): {content}")
+
+                # Forward to Nanobot via _on_message (non-blocking).
+                # Store reference to prevent GC before task completes.
+                task = asyncio.create_task(
+                    self.channel._on_message(content, sender_id, sender_name)
                 )
+                self.channel._background_tasks.add(task)
+                task.add_done_callback(self.channel._background_tasks.discard)
+
                 return AckMessage.STATUS_OK, "OK"
 
-            sender_id = chatbot_msg.sender_staff_id or chatbot_msg.sender_id
-            sender_name = chatbot_msg.sender_nick or "Unknown"
+            except Exception as e:
+                logger.error(f"Error processing DingTalk message: {e}")
+                # Return OK to avoid retry loop from DingTalk server
+                return AckMessage.STATUS_OK, "Error"
 
-            logger.info(f"Received DingTalk message from {sender_name} ({sender_id}): {content}")
-
-            # Forward to Nanobot via _on_message (non-blocking).
-            # Store reference to prevent GC before task completes.
-            task = asyncio.create_task(
-                self.channel._on_message(content, sender_id, sender_name)
-            )
-            self.channel._background_tasks.add(task)
-            task.add_done_callback(self.channel._background_tasks.discard)
-
-            return AckMessage.STATUS_OK, "OK"
-
-        except Exception as e:
-            logger.error(f"Error processing DingTalk message: {e}")
-            # Return OK to avoid retry loop from DingTalk server
-            return AckMessage.STATUS_OK, "Error"
+    return NanobotDingTalkHandler
 
 
 class DingTalkChannel(BaseChannel):
@@ -118,6 +114,9 @@ class DingTalkChannel(BaseChannel):
                 )
                 return
 
+            from dingtalk_stream import DingTalkStreamClient, Credential
+            from dingtalk_stream.chatbot import ChatbotMessage
+
             if not self.config.client_id or not self.config.client_secret:
                 logger.error("DingTalk client_id and client_secret not configured")
                 return
@@ -132,7 +131,8 @@ class DingTalkChannel(BaseChannel):
             self._client = DingTalkStreamClient(credential)
 
             # Register standard handler
-            handler = NanobotDingTalkHandler(self)
+            HandlerClass = _make_handler_class()
+            handler = HandlerClass(self)
             self._client.register_callback_handler(ChatbotMessage.TOPIC, handler)
 
             logger.info("DingTalk bot started with Stream Mode")
