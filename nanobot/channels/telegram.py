@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import io
 import re
@@ -66,6 +67,7 @@ class TelegramChannel(BaseChannel):
         self._app: Application | None = None
         self._chat_ids: dict[str, int] = {}  # Map sender_id to chat_id for replies
         self._typing_tasks: dict[str, asyncio.Task] = {}  # chat_id -> typing loop task
+        self._media_dir = Path.home() / ".nanobot" / "media"
 
     async def start(self) -> None:
         """Start the Telegram bot with long polling."""
@@ -281,11 +283,9 @@ class TelegramChannel(BaseChannel):
                 ext = self._get_extension(media_type, getattr(media_file, 'mime_type', None))
 
                 # Save to workspace/media/
-                from pathlib import Path
-                media_dir = Path.home() / ".nanobot" / "media"
-                media_dir.mkdir(parents=True, exist_ok=True)
+                await asyncio.to_thread(self._media_dir.mkdir, parents=True, exist_ok=True)
 
-                file_path = media_dir / f"{media_file.file_id[:16]}{ext}"
+                file_path = self._media_dir / f"{media_file.file_id[:16]}{ext}"
                 await file.download_to_drive(str(file_path))
 
                 media_paths.append(str(file_path))
