@@ -180,6 +180,29 @@ class DiscordChannel(BaseChannel):
 
         self._heartbeat_task = asyncio.create_task(heartbeat_loop())
 
+    async def _process_attachment(self, attachment: dict[str, Any], media_dir: Path) -> tuple[str | None, str | None]:
+        """Process a single attachment, returning (media_path, content_part)."""
+        url = attachment.get("url")
+        filename = attachment.get("filename") or "attachment"
+        size = attachment.get("size") or 0
+        if not url or not self._http:
+            return None, None
+        if size and size > MAX_ATTACHMENT_BYTES:
+            return None, f"[attachment: {filename} - too large]"
+        try:
+            # Note: mkdir could be moved out, but keeping here for isolation
+            media_dir.mkdir(parents=True, exist_ok=True)
+            file_path = (
+                media_dir / f"{attachment.get('id', 'file')}_{filename.replace('/', '_')}"
+            )
+            resp = await self._http.get(url)
+            resp.raise_for_status()
+            await asyncio.to_thread(file_path.write_bytes, resp.content)
+            return str(file_path), f"[attachment: {file_path}]"
+        except Exception as e:
+            logger.warning(f"Failed to download Discord attachment: {e}")
+            return None, f"[attachment: {filename} - download failed]"
+
     async def _handle_message_create(self, payload: dict[str, Any]) -> None:
         """Handle incoming Discord messages."""
         author = payload.get("author") or {}
@@ -200,28 +223,16 @@ class DiscordChannel(BaseChannel):
         media_paths: list[str] = []
         media_dir = Path.home() / ".nanobot" / "media"
 
-        for attachment in payload.get("attachments") or []:
-            url = attachment.get("url")
-            filename = attachment.get("filename") or "attachment"
-            size = attachment.get("size") or 0
-            if not url or not self._http:
-                continue
-            if size and size > MAX_ATTACHMENT_BYTES:
-                content_parts.append(f"[attachment: {filename} - too large]")
-                continue
-            try:
-                media_dir.mkdir(parents=True, exist_ok=True)
-                file_path = (
-                    media_dir / f"{attachment.get('id', 'file')}_{filename.replace('/', '_')}"
-                )
-                resp = await self._http.get(url)
-                resp.raise_for_status()
-                await asyncio.to_thread(file_path.write_bytes, resp.content)
-                media_paths.append(str(file_path))
-                content_parts.append(f"[attachment: {file_path}]")
-            except Exception as e:
-                logger.warning(f"Failed to download Discord attachment: {e}")
-                content_parts.append(f"[attachment: {filename} - download failed]")
+        attachments = payload.get("attachments") or []
+        if attachments:
+            results = await asyncio.gather(
+                *(self._process_attachment(att, media_dir) for att in attachments)
+            )
+            for m_path, c_part in results:
+                if m_path:
+                    media_paths.append(m_path)
+                if c_part:
+                    content_parts.append(c_part)
 
         reply_to = (payload.get("referenced_message") or {}).get("id")
 
