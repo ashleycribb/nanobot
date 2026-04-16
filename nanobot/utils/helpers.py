@@ -50,16 +50,10 @@ def timestamp() -> str:
 
 def truncate_string(s: str, max_len: int = 100, suffix: str = "...") -> str:
     """Truncate a string to max length, adding suffix if truncated."""
+    if max_len <= 0:
+        return ""
     if len(s) <= max_len:
         return s
-    if max_len < len(suffix):
-        return suffix[:max_len]
-
-    if max_len < len(suffix):
-        return s[:max_len]
-
-    if max_len < len(suffix):
-        return suffix[:max_len]
     if len(suffix) > max_len:
         return s[:max_len]
     return s[: max_len - len(suffix)] + suffix
