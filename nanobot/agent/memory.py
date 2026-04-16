@@ -41,12 +41,6 @@ class MemoryStore:
                 f.write(entry.rstrip() + "\n\n")
         await asyncio.to_thread(_append)
 
-    async def append_history(self, entry: str) -> None:
-        def _append():
-            with open(self.history_file, "a", encoding="utf-8") as f:
-                f.write(entry.rstrip() + "\n\n")
-        await asyncio.to_thread(_append)
-
     async def get_memory_context(self) -> str:
         long_term = await self.read_long_term()
 
