@@ -18,7 +18,7 @@ async def test_aget_memory_context_empty(memory_store):
 async def test_aget_memory_context_with_content(memory_store):
     """Test that a populated memory file returns the correct context string."""
     test_content = "- User prefers Python.\n- User lives in Tokyo."
-    memory_store.write_long_term(test_content)
+    await memory_store.write_long_term(test_content)
 
     context = await memory_store.aget_memory_context()
     expected_context = f"## Long-term Memory\n{test_content}"

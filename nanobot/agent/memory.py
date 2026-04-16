@@ -36,9 +36,11 @@ class MemoryStore:
         await asyncio.to_thread(self.memory_file.write_text, content, encoding="utf-8")
     async def aread_long_term(self) -> str:
         """Asynchronously read long-term memory."""
-        if self.memory_file.exists():
-            return await asyncio.to_thread(self.memory_file.read_text, encoding="utf-8")
-        return ""
+        def _read():
+            if self.memory_file.exists():
+                return self.memory_file.read_text(encoding="utf-8")
+            return ""
+        return await asyncio.to_thread(_read)
 
     async def write_long_term(self, content: str) -> None:
         await asyncio.to_thread(self.memory_file.write_text, content, encoding="utf-8")
