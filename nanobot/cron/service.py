@@ -187,8 +187,8 @@ class CronService:
             if j.enabled and j.state.next_run_at_ms and now >= j.state.next_run_at_ms
         ]
 
-        for job in due_jobs:
-            await self._execute_job(job)
+        if due_jobs:
+            await asyncio.gather(*(self._execute_job(job) for job in due_jobs))
 
         self._save_store()
         self._arm_timer()
