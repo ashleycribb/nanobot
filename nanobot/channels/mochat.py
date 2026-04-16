@@ -848,11 +848,16 @@ class MochatChannel(BaseChannel):
 
     async def _save_session_cursors(self) -> None:
         try:
-            self._state_dir.mkdir(parents=True, exist_ok=True)
-            self._cursor_path.write_text(json.dumps({
-                "schemaVersion": 1, "updatedAt": datetime.utcnow().isoformat(),
-                "cursors": self._session_cursor,
-            }, ensure_ascii=False, indent=2) + "\n", "utf-8")
+            cursor_copy = dict(self._session_cursor)
+
+            def _write() -> None:
+                self._state_dir.mkdir(parents=True, exist_ok=True)
+                self._cursor_path.write_text(json.dumps({
+                    "schemaVersion": 1, "updatedAt": datetime.utcnow().isoformat(),
+                    "cursors": cursor_copy,
+                }, ensure_ascii=False, indent=2) + "\n", "utf-8")
+
+            await asyncio.to_thread(_write)
         except Exception as e:
             logger.warning(f"Failed to save Mochat cursor file: {e}")
 
