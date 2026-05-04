@@ -26,8 +26,8 @@ from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.notebook import NotebookEditTool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.search import GlobTool, GrepTool
-from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.self import MyTool
+from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
@@ -662,6 +662,12 @@ class AgentLoop:
         pending_queue: asyncio.Queue | None = None,
     ) -> OutboundMessage | None:
         """Process a single inbound message and return the response."""
+        # Extract document text from media at the processing boundary so all
+        # channels benefit without format-specific logic in ContextBuilder.
+        if msg.media:
+            new_content, image_only = extract_documents(msg.content, msg.media)
+            msg = dataclasses.replace(msg, content=new_content, media=image_only)
+
         # System messages: parse origin from chat_id ("channel:chat_id")
         if msg.channel == "system":
             channel, chat_id = (
@@ -698,6 +704,7 @@ class AgentLoop:
             messages = self.context.build_messages(
                 history=history,
                 current_message="" if is_subagent else msg.content,
+                media=msg.media if not is_subagent and msg.media else None,
                 channel=channel,
                 chat_id=chat_id,
                 session_summary=pending,
@@ -716,12 +723,6 @@ class AgentLoop:
                 chat_id=chat_id,
                 content=final_content or "Background task completed.",
             )
-
-        # Extract document text from media at the processing boundary so all
-        # channels benefit without format-specific logic in ContextBuilder.
-        if msg.media:
-            new_content, image_only = extract_documents(msg.content, msg.media)
-            msg = dataclasses.replace(msg, content=new_content, media=image_only)
 
         preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
         logger.info("Processing message from {}:{}: {}", msg.channel, msg.sender_id, preview)
