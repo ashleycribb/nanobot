@@ -1,5 +1,6 @@
 """Context builder for assembling agent prompts."""
 
+import asyncio
 import base64
 import mimetypes
 import platform
@@ -27,7 +28,7 @@ class ContextBuilder:
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace, disabled_skills=set(disabled_skills) if disabled_skills else None)
 
-    def build_system_prompt(
+    async def build_system_prompt(
         self,
         skill_names: list[str] | None = None,
         channel: str | None = None,
@@ -35,25 +36,25 @@ class ContextBuilder:
         """Build the system prompt from identity, bootstrap files, memory, and skills."""
         parts = [self._get_identity(channel=channel)]
 
-        bootstrap = self._load_bootstrap_files()
+        bootstrap = await asyncio.to_thread(self._load_bootstrap_files)
         if bootstrap:
             parts.append(bootstrap)
 
-        memory = self.memory.get_memory_context()
-        if memory and not self._is_template_content(self.memory.read_memory(), "memory/MEMORY.md"):
+        memory = await self.memory.aget_memory_context()
+        if memory and not self._is_template_content(await self.memory.aread_memory(), "memory/MEMORY.md"):
             parts.append(f"# Memory\n\n{memory}")
 
-        always_skills = self.skills.get_always_skills()
+        always_skills = await asyncio.to_thread(self.skills.get_always_skills)
         if always_skills:
-            always_content = self.skills.load_skills_for_context(always_skills)
+            always_content = await asyncio.to_thread(self.skills.load_skills_for_context, always_skills)
             if always_content:
                 parts.append(f"# Active Skills\n\n{always_content}")
 
-        skills_summary = self.skills.build_skills_summary(exclude=set(always_skills))
+        skills_summary = await asyncio.to_thread(self.skills.build_skills_summary, exclude=set(always_skills))
         if skills_summary:
             parts.append(render_template("agent/skills_section.md", skills_summary=skills_summary))
 
-        entries = self.memory.read_unprocessed_history(since_cursor=self.memory.get_last_dream_cursor())
+        entries = await self.memory.aread_unprocessed_history(since_cursor=self.memory.get_last_dream_cursor())
         if entries:
             capped = entries[-self._MAX_RECENT_HISTORY:]
             parts.append("# Recent History\n\n" + "\n".join(
@@ -126,7 +127,7 @@ class ContextBuilder:
             pass
         return False
 
-    def build_messages(
+    async def build_messages(
         self,
         history: list[dict[str, Any]],
         current_message: str,
@@ -139,7 +140,7 @@ class ContextBuilder:
     ) -> list[dict[str, Any]]:
         """Build the complete message list for an LLM call."""
         runtime_ctx = self._build_runtime_context(channel, chat_id, self.timezone, session_summary=session_summary)
-        user_content = self._build_user_content(current_message, media)
+        user_content = await asyncio.to_thread(self._build_user_content, current_message, media)
 
         # Merge runtime context and user content into a single user message
         # to avoid consecutive same-role messages that some providers reject.
@@ -148,7 +149,7 @@ class ContextBuilder:
         else:
             merged = [{"type": "text", "text": runtime_ctx}] + user_content
         messages = [
-            {"role": "system", "content": self.build_system_prompt(skill_names, channel=channel)},
+            {"role": "system", "content": await self.build_system_prompt(skill_names, channel=channel)},
             *history,
         ]
         if messages[-1].get("role") == current_role:
