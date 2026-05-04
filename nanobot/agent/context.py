@@ -9,6 +9,7 @@ from typing import Any
 
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.skills import SkillsLoader
+from nanobot.utils.document import extract_documents
 from nanobot.utils.helpers import build_assistant_message, current_time_str, detect_image_mime
 from nanobot.utils.prompt_templates import render_template
 
@@ -161,6 +162,12 @@ class ContextBuilder:
 
     def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
         """Build user message content with optional base64-encoded images."""
+        if not media:
+            return text
+
+        # Extract document text from media so that downstream layers only
+        # need to handle vision blocks.
+        text, media = extract_documents(text, media)
         if not media:
             return text
 

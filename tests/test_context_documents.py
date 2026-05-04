@@ -1,8 +1,7 @@
 """Tests for context builder media handling.
 
-The ContextBuilder._build_user_content method should ONLY handle images.
-Document text extraction is the responsibility of the processing layer
-(AgentLoop._process_message and _drain_pending).
+The ContextBuilder._build_user_content method handles both images (as base64)
+and documents (by extracting text).
 """
 
 from __future__ import annotations
@@ -36,17 +35,18 @@ def test_build_user_content_with_image_returns_list(tmp_path: Path) -> None:
     assert "text" in types
 
 
-def test_build_user_content_ignores_non_image_files(tmp_path: Path) -> None:
-    """Non-image files should be silently skipped — extraction is not context builder's job."""
+def test_build_user_content_extracts_non_image_files(tmp_path: Path) -> None:
+    """Non-image files should have their text extracted by the context builder."""
     builder = _make_builder(tmp_path)
     txt = tmp_path / "notes.txt"
-    txt.write_text("some text", encoding="utf-8")
+    txt.write_text("some text in file", encoding="utf-8")
     result = builder._build_user_content("summarize", [str(txt)])
-    assert result == "summarize"
+    assert "some text in file" in result
+    assert "summarize" in result
 
 
 def test_build_user_content_mixed_image_and_non_image(tmp_path: Path) -> None:
-    """Only images should be included; non-image files are skipped."""
+    """Both images and extracted document text should be included."""
     builder = _make_builder(tmp_path)
     png = tmp_path / "chart.png"
     png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
@@ -57,7 +57,8 @@ def test_build_user_content_mixed_image_and_non_image(tmp_path: Path) -> None:
     assert isinstance(result, list)
     assert any(b["type"] == "image_url" for b in result)
     text_parts = [b.get("text", "") for b in result if b.get("type") == "text"]
-    assert all("report text" not in t for t in text_parts)
+    assert any("report text" in t for t in text_parts)
+    assert any("analyze" in t for t in text_parts)
 
 
 # ---------------------------------------------------------------------------
@@ -67,10 +68,7 @@ def test_build_user_content_mixed_image_and_non_image(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def test_drain_pending_path_preserves_document_text(tmp_path: Path) -> None:
-    """Simulates the _drain_pending path: a pending follow-up message
-    with a document attachment must have its text extracted before being
-    passed to _build_user_content.  Without extract_documents, the
-    document is silently dropped."""
+    """Verifies that manual extraction by the caller still works and is compatible."""
     from docx import Document
 
     doc = Document()
@@ -81,10 +79,10 @@ def test_drain_pending_path_preserves_document_text(tmp_path: Path) -> None:
     content = "summarize"
     media = [str(docx_path)]
 
-    # Step 1: extract_documents separates docs from images
+    # Caller-side extraction
     new_content, image_only = extract_documents(content, media)
 
-    # Step 2: _build_user_content handles only images (none left here)
+    # builder._build_user_content will see no more documents in image_only
     builder = _make_builder(tmp_path)
     result = builder._build_user_content(new_content, image_only if image_only else None)
 
@@ -93,9 +91,9 @@ def test_drain_pending_path_preserves_document_text(tmp_path: Path) -> None:
     assert "summarize" in result
 
 
-def test_drain_pending_path_without_extract_loses_document(tmp_path: Path) -> None:
-    """Demonstrates the BUG: if _drain_pending calls _build_user_content
-    directly without extract_documents, document content is lost."""
+def test_drain_pending_path_with_automatic_extraction(tmp_path: Path) -> None:
+    """Verifies the FIX: if _drain_pending calls _build_user_content
+    directly with document media, document content is now preserved."""
     from docx import Document
 
     doc = Document()
@@ -105,9 +103,9 @@ def test_drain_pending_path_without_extract_loses_document(tmp_path: Path) -> No
 
     builder = _make_builder(tmp_path)
 
-    # Bug path: call _build_user_content directly with document media
+    # Fixed path: call _build_user_content directly with document media
     result = builder._build_user_content("summarize", [str(docx_path)])
 
-    # The document text is LOST — _build_user_content ignores non-images
-    assert result == "summarize"  # only the original text, no doc content
-    assert "Secret data" not in result
+    # The document text is now PRESERVED
+    assert "Secret data" in result
+    assert "summarize" in result
