@@ -8,7 +8,7 @@ import re
 import weakref
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterator
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Iterator
 
 from loguru import logger
 
@@ -194,6 +194,10 @@ class MemoryStore:
     def read_memory(self) -> str:
         return self.read_file(self.memory_file)
 
+    async def aread_memory(self) -> str:
+        """Async version of read_memory."""
+        return await asyncio.to_thread(self.read_memory)
+
     def write_memory(self, content: str) -> None:
         self.memory_file.write_text(content, encoding="utf-8")
 
@@ -218,6 +222,10 @@ class MemoryStore:
     def get_memory_context(self) -> str:
         long_term = self.read_memory()
         return f"## Long-term Memory\n{long_term}" if long_term else ""
+
+    async def aget_memory_context(self) -> str:
+        """Async version of get_memory_context."""
+        return await asyncio.to_thread(self.get_memory_context)
 
     # -- history.jsonl — append-only, JSONL format ---------------------------
 
@@ -293,6 +301,10 @@ class MemoryStore:
     def read_unprocessed_history(self, since_cursor: int) -> list[dict[str, Any]]:
         """Return history entries with a valid cursor > *since_cursor*."""
         return [e for e, c in self._iter_valid_entries() if c > since_cursor]
+
+    async def aread_unprocessed_history(self, since_cursor: int) -> list[dict[str, Any]]:
+        """Async version of read_unprocessed_history."""
+        return await asyncio.to_thread(self.read_unprocessed_history, since_cursor)
 
     def compact_history(self) -> None:
         """Drop oldest entries if the file exceeds *max_history_entries*."""
@@ -405,7 +417,7 @@ class Consolidator:
         model: str,
         sessions: SessionManager,
         context_window_tokens: int,
-        build_messages: Callable[..., list[dict[str, Any]]],
+        build_messages: Callable[..., Awaitable[list[dict[str, Any]]]],
         get_tool_definitions: Callable[[], list[dict[str, Any]]],
         max_completion_tokens: int = 4096,
     ):
@@ -463,7 +475,7 @@ class Consolidator:
                 return idx
         return None
 
-    def estimate_session_prompt_tokens(
+    async def estimate_session_prompt_tokens(
         self,
         session: Session,
         *,
@@ -472,7 +484,7 @@ class Consolidator:
         """Estimate current prompt size for the normal session history view."""
         history = session.get_history(max_messages=0)
         channel, chat_id = (session.key.split(":", 1) if ":" in session.key else (None, None))
-        probe_messages = self._build_messages(
+        probe_messages = await self._build_messages(
             history=history,
             current_message="[token-probe]",
             channel=channel,
@@ -539,7 +551,7 @@ class Consolidator:
             budget = self.context_window_tokens - self.max_completion_tokens - self._SAFETY_BUFFER
             target = budget // 2
             try:
-                estimated, source = self.estimate_session_prompt_tokens(
+                estimated, source = await self.estimate_session_prompt_tokens(
                     session,
                     session_summary=session_summary,
                 )
@@ -606,7 +618,7 @@ class Consolidator:
                 self.sessions.save(session)
 
                 try:
-                    estimated, source = self.estimate_session_prompt_tokens(
+                    estimated, source = await self.estimate_session_prompt_tokens(
                         session,
                         session_summary=session_summary,
                     )
@@ -775,7 +787,7 @@ class Dream:
         from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 
         last_cursor = self.store.get_last_dream_cursor()
-        entries = self.store.read_unprocessed_history(since_cursor=last_cursor)
+        entries = await self.store.aread_unprocessed_history(since_cursor=last_cursor)
         if not entries:
             return False
 
@@ -792,14 +804,14 @@ class Dream:
 
         # Current file contents + per-line age annotations (MEMORY.md only)
         current_date = datetime.now().strftime("%Y-%m-%d")
-        raw_memory = self.store.read_memory() or "(empty)"
+        raw_memory = await self.store.aread_memory() or "(empty)"
         current_memory = (
             self._annotate_with_ages(raw_memory)
             if self.annotate_line_ages
             else raw_memory
         )
-        current_soul = self.store.read_soul() or "(empty)"
-        current_user = self.store.read_user() or "(empty)"
+        current_soul = await asyncio.to_thread(self.store.read_soul) or "(empty)"
+        current_user = await asyncio.to_thread(self.store.read_user) or "(empty)"
 
         file_context = (
             f"## Current Date\n{current_date}\n\n"

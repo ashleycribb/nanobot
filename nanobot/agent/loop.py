@@ -695,7 +695,7 @@ class AgentLoop:
 
             # Subagent content is already in `history` above; passing it again
             # as current_message would double-project it into the prompt.
-            messages = self.context.build_messages(
+            messages = await self.context.build_messages(
                 history=history,
                 current_message="" if is_subagent else msg.content,
                 channel=channel,
@@ -753,7 +753,7 @@ class AgentLoop:
 
         history = session.get_history(max_messages=0)
 
-        initial_messages = self.context.build_messages(
+        initial_messages = await self.context.build_messages(
             history=history,
             current_message=msg.content,
             session_summary=pending,
